@@ -397,9 +397,11 @@ The reference implementation lives at
 A future revision MAY add:
 
 - `concurrency: { group: speckit-linear-${{ github.event.pull_request.number }}, cancel-in-progress: false }`
-  per action mechanics §4 Open Question 4. TBD pending decision
-  on whether `opened → ready_for_review` races are observed in
-  practice.
+  per action mechanics §4 Open Question 4. The v1 reference YAML
+  omits this block; T077 dogfood records whether an
+  `opened → ready_for_review` race ever fires the Action twice
+  on the same PR within a 5-second window. If observed, add the
+  concurrency group in the first patch release.
 
 A future revision MUST NOT add:
 
@@ -436,15 +438,26 @@ Any one of these failing is grounds for blocking the PR.
 
 ---
 
-## 10. TBDs
+## 10. Items to confirm during T077 dogfood
 
 - **Concurrency group** (§8) — decide based on observed race
-  behaviour. Reference YAML omits.
-- **Self-hosted runner yq fallback** (action mechanics §4 Open
-  Question 2) — pin `mikefarah/yq-action` if self-hosted support
-  is required; v1 targets `ubuntu-latest` only.
-- **Label filter shape** (`labels: { name: { eq } }` vs
-  `labels: { some: { name: { eq } } }`) — reference YAML uses the
-  flat form; live-tested against the workspace probe in
-  `validation/linear-workspace-probe.md` before ship. TBD pending
-  one-shot live verification.
+  behaviour. The v1 reference YAML omits the `concurrency:` block;
+  T077 dogfood records whether `opened → ready_for_review` races
+  fire the Action twice on the same PR within a 5-second window. If
+  observed, add the concurrency group in the first patch release.
+
+- **Self-hosted runner `yq` fallback** (action mechanics §4 Open
+  Question 2) — v1 targets `ubuntu-latest` only, which preinstalls
+  `yq` (Mike Farah build). If a future operator needs self-hosted
+  runner support, pin `mikefarah/yq-action@v4.x` as a job step before
+  the config-read step. This is documented as a follow-up, not a v1
+  blocker — the contract here is `ubuntu-latest` only.
+
+- **Label filter shape.** Use the flat form:
+  `issues(filter: { labels: { name: { eq: "speckit-spec:NNN" } } })`.
+  Linear GraphQL accepts both flat and nested `some {}` forms; the
+  flat form is sufficient for our scoped query (per the workspace
+  probe and `validation/linear-mcp-runtime-probe.md` §A — label
+  filters resolve server-side regardless of form). T077 dogfood
+  verifies the flat form returns exactly one node against
+  `OSH-INFRA`'s `speckit-spec:001` label.

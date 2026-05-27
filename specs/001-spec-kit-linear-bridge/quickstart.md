@@ -56,8 +56,9 @@ specify extension add linear   # copies the extension tree into .specify/extensi
 ```
 
 The install ceremony walks five sub-steps. Exact wording is pinned
-by `commands/linear-install.md` — `[TBD by /speckit-tasks]` for any
-prompt not yet locked.
+by `commands/linear-install.md`; the prompts below are the locked
+baseline operators will see (refinements during T077 dogfood are
+HTML-commented where they appear).
 
 1. **Dependency report.** A table of every dependency the bridge
    touches (`bash`, `curl`, `jq`, `git`, `gh`, the consumer
@@ -65,24 +66,62 @@ prompt not yet locked.
    writability) with green/yellow/red status and a copy-pasteable
    remediation per non-green row. The install refuses to proceed
    silently — missing `gh` either gets installed or you explicitly
-   accept the degraded `Ready-to-merge` path before continuing.
+   accept the degraded `Ready-to-merge` path before continuing. The
+   report header line is verbatim:
+
+   ```text
+   [linear] Dependency report (FR-018b). Resolve every ✗ row before continuing.
+   ```
+
 2. **Team picker.** Auto-fills if exactly one team exists; otherwise
-   prompts (default = team named "INFRA" or matching the workspace
-   name). Non-interactive: `--team <UUID>`.
+   prompts (default = team matching the workspace name). The
+   single-team auto-pick prints:
+
+   ```text
+   [linear] Found 1 team in <workspace> — using <team-key> (auto). Override with --team <UUID>.
+   ```
+
+   Non-interactive: `--team <UUID>`.
+
 3. **Project picker.** Default is "create a new Project named after
-   the repo directory". You can attach to an existing Project by
-   UUID or rename. Non-interactive: `--project <UUID>` or
-   `--auto-create`.
+   the repo directory". The interactive prompt is:
+
+   ```text
+   [linear] Where should this repo's specs land in Linear?
+            Create new Project "<repo-basename>", attach to an existing one, or rename?
+            [create/attach/rename] (default: create):
+   ```
+
+   Non-interactive: `--project <UUID>` or `--auto-create`.
+
 4. **Webhook offer.** Asks whether to drop
-   `.github/workflows/speckit-linear-sync.yml` (Layer E). If you
-   accept, it prints the exact
+   `.github/workflows/speckit-linear-sync.yml` (Layer E). The prompt
+   is verbatim:
+
+   ```text
+   [linear] Install Layer E (GitHub Action webhook)? Adds
+            .github/workflows/speckit-linear-sync.yml and requires
+            LINEAR_API_TOKEN GitHub secret. [y/N]
+   ```
+
+   If you accept, it prints the exact
    `gh secret set LINEAR_API_TOKEN -R <owner>/<repo>` command and
    waits for you to confirm the secret before flipping
    `webhook.installed: true`.
+
 5. **Local git hooks.** Drops `post-checkout`, `post-commit`, and
    `post-merge` into `.git/hooks/`, chaining onto any pre-existing
    hooks per FR-033. Unresolvable collisions are surfaced as an
-   explicit choice, never silently overwritten.
+   explicit choice, never silently overwritten. The collision prompt
+   is:
+
+   ```text
+   [linear] .git/hooks/post-commit already exists (non-bridge content).
+            [chain/skip/abort] (default: chain):
+   ```
+
+<!-- confirm during T077 dogfood: the exact wording above is the operator's pre-implement baseline; the dogfood run may surface UX refinements (e.g. shorter prompts, colour cues). Any change MUST be backported into commands/linear-install.md. -->
+
 
 End-state after Step 1:
 
@@ -151,8 +190,10 @@ seed: workflow states  → created 0, skipped 9 (already present)
 seed: captured 9 workflow state UUIDs into config
 ```
 
-`[TBD by /speckit-tasks]`: exact summary line wording is pinned by
-`src/summary.sh`.
+Summary-line wording is pinned by `src/summary.sh` and matches the
+two blocks above verbatim (`seed: <step> → <result>` lines plus a
+final `seed: done in ~Ns`). <!-- confirm during T077 dogfood: exact wall-clock substring formatting may be tuned for consistency with push's summary. -->
+
 
 ## Step 3 — First reconcile (sync existing specs OR scaffold for new)
 
@@ -297,7 +338,7 @@ per SC-011.
 |-------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
 | `Bash 3.2 detected. Install bash >= 4.`                                 | `brew install bash`, re-open shell, re-run.                                                                              |
 | `gh: not authenticated.`                                                | `gh auth login`; accept the `repo` scope so the bridge can read PR state for Layer D fallback.                           |
-| `Linear MCP OAuth not present.`                                         | Authenticate the MCP endpoint from your coding agent. `[TBD by /speckit-tasks]` — exact slash command pinned at task time. |
+| `Linear MCP OAuth not present.`                                         | Run `npx -y mcp-remote https://mcp.linear.app/mcp --transport http-only` once to trigger the OAuth browser flow; cached credentials land in `~/.mcp-auth/mcp-remote-*/` and `mcp-remote` will silently refresh them on subsequent runs (per `validation/linear-mcp-runtime-probe.md` §"Path attempted"). |
 | `workspace not seeded — workflow_state_uuids missing for <phase>`       | Run `/speckit-linear-seed`. The push halts cleanly per FR-022 — no partial Linear state.                                 |
 | `Spec NNN has no spec.md. Skipping with warning.`                       | Expected per FR-024. Fix `spec.md` or remove the directory.                                                              |
 | `Two Issues with label speckit-spec:NNN. Kept most recent; archived 1.` | Expected per FR-004b — rare race auto-resolved. Open the archived Issue to copy history out if needed.                   |

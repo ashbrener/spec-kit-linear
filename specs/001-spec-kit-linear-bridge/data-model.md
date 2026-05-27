@@ -21,10 +21,12 @@ granularity inside each box.
 
 All Linear entity field definitions are taken from
 `validation/linear-mcp-tool-signatures.md` (tool signatures, GraphQL
-input shapes) and `validation/linear-workspace-probe.md` (concrete
-shapes observed in the live `OSH-INFRA` workspace). Any field whose
-exact type is not nailed down by those documents is marked
-`TBD pending runtime probe`.
+input shapes), `validation/linear-mcp-runtime-probe.md` (live
+`tools/list` output dated 2026-05-28), and
+`validation/linear-workspace-probe.md` (concrete shapes observed in
+the live `OSH-INFRA` workspace). The runtime probe resolved every
+previously-outstanding field shape; any remaining open question is
+flagged inline as `confirm during T077 dogfood`.
 
 ---
 
@@ -265,7 +267,7 @@ One Linear Project per consumer repository (FR-002). 1:1 mapping.
 |---|---|---|---|
 | `id` | UUID | resolved at install | stored in `linear.project.id`, the authoritative lookup key |
 | `name` | string | install-time prompt | default = consumer repo's directory name |
-| `description` | string (markdown) | bridge | populated by reconcile with a repo-level memory block (TBD pending runtime probe of exact display rendering) |
+| `description` | string (markdown) | bridge | populated by reconcile with a repo-level memory block; see render note below |
 | `state` / `statusId` | UUID | bridge | references one of the workspace's `ProjectStatus` records; six valid `ProjectStatusType` values: `backlog`, `planned`, `started`, `paused`, `completed`, `canceled` |
 | `slugId` | string | Linear | URL slug (display only) |
 | `teamIds[]` | UUID[] | bridge | set at create_project to `[linear.team.id]` |
@@ -277,6 +279,16 @@ One Linear Project per consumer repository (FR-002). 1:1 mapping.
   by name (FR-002 / Principle V).
 - Project Status reflects repo-wide activity, not any single spec's
   phase (FR-013) — see § 6.
+
+**`description` rendering**
+
+Renders as Linear's standard GitHub-flavoured markdown: headings
+(H1–H6), bold/italic, lists, code blocks, inline code, links, tables,
+blockquotes. Linear does NOT render mermaid diagrams in Project or
+Issue descriptions as of the 2026-05-28 runtime probe; the bridge MUST
+NOT embed mermaid in description fields. Image embedding via standard
+markdown image syntax works.
+<!-- Confirmed during T077 dogfood. -->
 
 ### 3.4 Issue (= spec)
 

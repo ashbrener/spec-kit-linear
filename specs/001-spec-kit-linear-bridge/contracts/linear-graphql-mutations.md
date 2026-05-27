@@ -415,11 +415,17 @@ bridge picks per task-phase based on aggregated checkbox state:
 - Mix → `In Progress` (state-type `started`)
 - All `[x]` → `Done` (state-type `completed`)
 
-These are Linear's per-Team default states; the bridge resolves
-them at install time and caches their UUIDs in
-`linear.workflow_state_uuids` under reserved keys `_task_todo`,
-`_task_inprogress`, `_task_done` (TBD pending validation/linear-mcp-runtime-probe.md
-confirms the default-state IDs are queryable via `list_issue_statuses(team)`).
+These are Linear's per-Team default states. Task-phase sub-issues
+use the team's existing default workflow states — Todo, In Progress,
+Done — NOT the nine spec-lifecycle states which are scoped to spec
+Issues (see § 3.7 of `data-model.md`). The seed step MUST query
+`list_issue_statuses(team)` (the live MCP tool name per the runtime
+probe §3 catalogue) and capture the UUIDs of any state whose `type`
+is in `{unstarted, started, completed}` into a separate
+`default_state_uuids` map in `linear-config.yml` alongside
+`workflow_state_uuids`. The reconciler reads this map (keys
+`task_todo`, `task_in_progress`, `task_done`) when setting sub-issue
+workflow states.
 
 **FR-005 invariant**: exactly one task-phase sub-issue is in
 `In Progress` while the spec is in an implementing phase. Bridge
@@ -459,9 +465,13 @@ risk is unacceptable (e.g. high-concurrency repo with two
 worktrees), the bridge MAY fall back to GraphQL
 `issueRelationCreate(input: { id: $deterministicId, issueId, relatedIssueId, type: blocks })`
 with a deterministic UUIDv4 — `uuidv5(specUuid + "::" + fromPhase + "->" + toPhase, NS)`.
-v1 default is MCP path; fallback only if probe shows duplicate
-relations forming. TBD pending validation/linear-mcp-runtime-probe.md
-write probe.
+v1 default is MCP path with a mandatory pre-query (per §4.4
+idempotency above): the bridge MUST query the existing `blocks`
+array via `get_issue` before invoking `save_issue` with new
+`blocks`, diff against the desired set, and issue exactly the
+deltas. If the T077 dogfood write probe confirms native
+append-with-dedupe semantics on `save_issue.blocks`, the pre-query
+MAY be dropped as an optimisation; until then it is mandatory.
 
 **Error handling**: Same as §4.1.
 
@@ -656,11 +666,21 @@ All queries are issued from both the MCP path (via `list_*` /
 
 ### 7.2 Rate limits
 
-Per `linear-mcp-tool-signatures.md` §2: 5000 req/hr/user, 2M
-complexity points/hr, 10k complexity per query, no `Retry-After`
-header. The bridge implements exponential backoff (1s, 2s, 4s, 8s,
-give up) and respects `X-RateLimit-Endpoint-Remaining` to
-self-throttle adjacent mutations during heavy reconciles.
+Per `linear-mcp-tool-signatures.md` §2 and Linear's published
+rate-limiting docs (https://linear.app/developers/rate-limiting):
+5,000 req/hr/user, 2,000,000 complexity points/hr, 10k complexity
+per query. No `Retry-After` header; rate-limit errors surface as
+HTTP 400 with code `RATELIMITED`. The bridge MUST:
+
+- Implement exponential backoff (1s, 2s, 4s, 8s, give up) on every
+  `RATELIMITED` response.
+- Respect `X-RateLimit-Endpoint-Remaining` and self-throttle when
+  the value drops below 10% of `X-RateLimit-Endpoint-Limit`.
+- Surface remaining-budget warnings in the summary block when any
+  endpoint stays below 25% for two consecutive mutations.
+
+Personal API tokens (`.env` `LINEAR_API_KEY`) and OAuth-app tokens
+share the same per-user ceilings.
 
 ### 7.3 Idempotency-via-deterministic-`id`
 
@@ -726,21 +746,52 @@ it in a future version if a use case emerges, but v1 ships without.
 
 ---
 
-## 9. TBDs pending runtime probe
+## 9. Items to confirm during T077 dogfood
 
-- **Per-mutation sub-rate-limits** (probe §3 — "NOT TESTABLE via
-  introspection"). The bridge implements adaptive backoff against
-  `X-RateLimit-Endpoint-Remaining` headers; exact thresholds
-  emerge at runtime.
-- **`save_issue.blocks` write-idempotency** (probe §"Remaining
-  unknowns") — suspected append-with-dedupe, not documented. If a
-  duplicate-relation defect appears, fall back to GraphQL
-  `issueRelationCreate` with deterministic `id` (§4.4
-  belt-and-braces).
-- **Default-state UUIDs for task-phase Todo/InProgress/Done**
-  (§4.3) — likely queryable via `list_issue_statuses(team)`;
-  exact tool params TBD pending `validation/linear-mcp-runtime-probe.md`
-  follow-up probe.
-- **`save_comment` body-mutation behaviour on `id` reuse** (§4.5)
-  — probe §3 says "If `id` is provided, updates the existing
-  item"; assumed true for comments. One write-probe confirms.
+The 2026-05-28 runtime probe
+(`validation/linear-mcp-runtime-probe.md`) resolved every
+introspectable unknown. The four items below are write-side
+behaviours that the read-only probe couldn't exercise; the T077
+dogfood is the canonical write probe and MUST verify each one
+against the live OSH-INFRA workspace.
+
+- **Per-mutation sub-rate-limits.** Per
+  `validation/linear-mcp-tool-signatures.md` §2, Linear publishes
+  global limits — 5,000 req/hr/user + 2,000,000 complexity points/hr,
+  per-query ceiling 10k complexity points — but sub-limits on
+  individual mutations are undocumented. The bridge MUST read
+  `X-RateLimit-Endpoint-Remaining` from every mutation response and
+  back off (1s, 2s, 4s, 8s, give up) when the value drops below 10%
+  of `X-RateLimit-Endpoint-Limit`. Errors return HTTP 400 with code
+  `RATELIMITED`; there is no `Retry-After` header. T077 dogfood
+  records the observed endpoint-limit numbers in
+  `validation/performance-baseline.md`.
+
+- **`save_issue.blocks` write-idempotency.** Per the runtime probe
+  §"Remaining unknowns", the suspected behaviour is
+  append-with-dedupe but not documented. The bridge MUST query the
+  existing `blocks` array via `get_issue` before invoking
+  `save_issue` with new `blocks` to avoid stacking duplicates. If
+  T077 dogfood confirms native append-with-dedupe, the pre-query
+  MAY be dropped as an optimisation; otherwise it stays mandatory.
+
+- **Default-state UUIDs for task-phase Todo/In Progress/Done.** The
+  team's stock workflow states (state types `unstarted`, `started`,
+  `completed`) are queryable via `list_issue_statuses(team)` (live
+  MCP tool name per probe §3). The seed step MUST capture these
+  UUIDs into a new `default_state_uuids` map in `linear-config.yml`
+  (keys: `task_todo`, `task_in_progress`, `task_done`). T077
+  dogfood confirms the exact `type` → key mapping against the
+  live OSH-INFRA team.
+
+- **`save_comment` body-mutation on `id` reuse.** Probe §3 documents
+  the generic save-mutation contract ("If `id` is provided, updates
+  the existing item"); assumed true for comments but not directly
+  exercised. Bridge dedupes clarify-session comments by body match
+  (first-line HTML marker + 200-char body prefix per §4.5). If an
+  operator hand-edits a ratified clarify session in `spec.md`, the
+  body match fails and the bridge posts a NEW comment rather than
+  mutating the old — Linear's MCP `save_comment` does not currently
+  give the bridge an id-stable update path because comment IDs are
+  Linear-side-only on first create. T077 dogfood verifies this
+  divergence path with one deliberate spec.md edit.

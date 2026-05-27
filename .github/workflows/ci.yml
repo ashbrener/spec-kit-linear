@@ -205,12 +205,11 @@ jobs:
           printf '  %s\n' "${globs[@]}"
           # `--no-globs` is NOT what we want; we DO want shell globs expanded.
           # markdownlint-cli2 accepts globs as positional arguments.
-          # MD013 (line length) is disabled inline because spec artifacts use
-          # narrative prose that wraps naturally and exceeds 80 cols. MD041
-          # (first line must be H1) is fine for our docs.
-          npx --yes markdownlint-cli2 \
-            --config '{"default": true, "MD013": false, "MD033": false, "MD041": false}' \
-            "${globs[@]}"
+          # Rule configuration lives in `.markdownlint-cli2.jsonc` at the repo
+          # root, which markdownlint-cli2 auto-discovers from the working
+          # directory. Keeping the config out-of-band means local
+          # `npx markdownlint-cli2` runs agree with CI.
+          npx --yes markdownlint-cli2 "${globs[@]}"
 
   # ---------------------------------------------------------------------------
   # Job 4: bats test matrix across bash 4 and bash 5
