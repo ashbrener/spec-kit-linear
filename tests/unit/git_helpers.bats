@@ -122,24 +122,27 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# Helper: strip every directory containing a `gh` binary from PATH so the
-# fallback path in git_helpers::pr_state is forced. We keep /usr/bin and
-# /bin so basic utilities (git, stat, date) still resolve.
+# Helper: hide `gh` from PATH so the fallback path in git_helpers::pr_state
+# is forced. We do this by prepending a SHIMS directory containing a `gh`
+# stub that always reports "command not found"-equivalent behaviour, rather
+# than stripping the directory itself — stripping /usr/bin (where gh
+# typically lives on ubuntu-latest) would also evict `rm`, `stat`, etc.,
+# which bats's own internal cleanup needs (and which would fail the whole
+# test run with `rm: command not found` even though every individual test
+# passed). The shim approach keeps PATH otherwise intact.
 # -----------------------------------------------------------------------------
 _strip_gh_from_path() {
-  local sanitised='' entry
-  IFS=':' read -ra _path_parts <<< "$PATH"
-  for entry in "${_path_parts[@]}"; do
-    if [[ -x "$entry/gh" ]]; then
-      continue
-    fi
-    if [[ -z "$sanitised" ]]; then
-      sanitised="$entry"
-    else
-      sanitised="$sanitised:$entry"
-    fi
-  done
-  export PATH="$sanitised"
+  cat > "$SHIMS/gh" <<'EOF'
+#!/usr/bin/env bash
+# Stub `gh` that pretends not to exist. We exit non-zero so any caller
+# treats it as a hard failure; git_helpers::pr_state specifically tests
+# `command -v gh` first which will succeed (the stub IS executable and
+# on PATH), but its own logic falls through to the git fallback when the
+# `gh auth status` probe fails — which this stub guarantees by exiting 127.
+exit 127
+EOF
+  chmod +x "$SHIMS/gh"
+  export PATH="$SHIMS:$PATH"
 }
 
 # =============================================================================
