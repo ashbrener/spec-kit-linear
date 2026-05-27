@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - Initial spec-kit scaffolding via `specify init --here --integration claude`.
 - Kickoff brief (`BRIEF.md`) capturing the architectural decisions reached
   during the BLOK9 planning session on 2026-05-27.

@@ -29,6 +29,19 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Cache the absolute path to `git` at module-source time. The test harness in
+# tests/unit/git_helpers.bats forces the git-only fallback path of pr_state by
+# stripping every PATH entry that contains a `gh` binary — on most Linux
+# distros (and the CI runner) git and gh both live in /usr/bin, so the strip
+# also evicts git from PATH. Resolving git here, BEFORE any test manipulates
+# PATH, lets pr_state invoke it via the absolute path and keeps the fallback
+# working even when PATH has been narrowed. The shell variable falls back to
+# the bare `git` token when resolution fails, so non-test consumers see no
+# behavioural change.
+# ---------------------------------------------------------------------------
+_GIT_HELPERS_GIT_BIN="$(command -v git 2>/dev/null || printf 'git')"
+
+# ---------------------------------------------------------------------------
 # git_helpers::current_branch
 #
 # Echoes the name of the currently checked-out branch, or empty string when
@@ -259,11 +272,17 @@ git_helpers::pr_state() {
   # PRs land. If that ref doesn't exist (fresh clone, non-standard
   # default branch, no remote), fall back to the current branch's
   # upstream as a best-effort base.
+  #
+  # NOTE: we invoke git via the absolute path captured at module-source
+  # time (see _GIT_HELPERS_GIT_BIN above) so the fallback works even when
+  # the test harness has stripped /usr/bin from PATH to evict the `gh`
+  # binary alongside it.
+  local git_bin="${_GIT_HELPERS_GIT_BIN:-git}"
   local base=''
-  if git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null 2>&1; then
+  if "$git_bin" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null 2>&1; then
     base='refs/remotes/origin/main'
-  elif git rev-parse --verify --quiet '@{upstream}' >/dev/null 2>&1; then
-    base=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || printf '')
+  elif "$git_bin" rev-parse --verify --quiet '@{upstream}' >/dev/null 2>&1; then
+    base=$("$git_bin" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || printf '')
   fi
 
   if [[ -z "$base" ]]; then
@@ -274,14 +293,14 @@ git_helpers::pr_state() {
 
   # The branch must actually exist locally for `git merge-base` to work
   # in either direction. If it doesn't, we can't answer, so emit nothing.
-  if ! git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 \
-    && ! git rev-parse --verify --quiet "$branch" >/dev/null 2>&1; then
+  if ! "$git_bin" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 \
+    && ! "$git_bin" rev-parse --verify --quiet "$branch" >/dev/null 2>&1; then
     return 0
   fi
 
   # `git merge-base --is-ancestor A B` returns 0 iff A is reachable from B.
   # A branch is "merged" iff its tip commit is reachable from the base.
-  if git merge-base --is-ancestor "$branch" "$base" >/dev/null 2>&1; then
+  if "$git_bin" merge-base --is-ancestor "$branch" "$base" >/dev/null 2>&1; then
     printf 'merged\n'
   else
     printf 'open\n'

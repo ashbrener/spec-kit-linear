@@ -667,7 +667,7 @@ All queries are issued from both the MCP path (via `list_*` /
 ### 7.2 Rate limits
 
 Per `linear-mcp-tool-signatures.md` §2 and Linear's published
-rate-limiting docs (https://linear.app/developers/rate-limiting):
+rate-limiting docs (<https://linear.app/developers/rate-limiting>):
 5,000 req/hr/user, 2,000,000 complexity points/hr, 10k complexity
 per query. No `Retry-After` header; rate-limit errors surface as
 HTTP 400 with code `RATELIMITED`. The bridge MUST:

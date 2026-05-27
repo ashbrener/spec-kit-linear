@@ -122,7 +122,6 @@ HTML-commented where they appear).
 
 <!-- confirm during T077 dogfood: the exact wording above is the operator's pre-implement baseline; the dogfood run may surface UX refinements (e.g. shorter prompts, colour cues). Any change MUST be backported into commands/linear-install.md. -->
 
-
 End-state after Step 1:
 
 - `.specify/extensions/linear/linear-config.yml` exists with
@@ -193,7 +192,6 @@ seed: captured 9 workflow state UUIDs into config
 Summary-line wording is pinned by `src/summary.sh` and matches the
 two blocks above verbatim (`seed: <step> → <result>` lines plus a
 final `seed: done in ~Ns`). <!-- confirm during T077 dogfood: exact wall-clock substring formatting may be tuned for consistency with push's summary. -->
-
 
 ## Step 3 — First reconcile (sync existing specs OR scaffold for new)
 

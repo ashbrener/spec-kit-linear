@@ -70,15 +70,18 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# shellcheck source=./config.sh
+# Note: SC1091 disabled per source directive because CI invokes shellcheck
+# without --external-sources; the `source=` directives still document intent
+# for IDE-side shellcheck integrations that DO follow external sources.
+# shellcheck source=./config.sh disable=SC1091
 source "${SCRIPT_DIR}/config.sh"
-# shellcheck source=./graphql.sh
+# shellcheck source=./graphql.sh disable=SC1091
 source "${SCRIPT_DIR}/graphql.sh"
-# shellcheck source=./git_helpers.sh
+# shellcheck source=./git_helpers.sh disable=SC1091
 source "${SCRIPT_DIR}/git_helpers.sh"
-# shellcheck source=./summary.sh
+# shellcheck source=./summary.sh disable=SC1091
 source "${SCRIPT_DIR}/summary.sh"
-# shellcheck source=./parser.sh
+# shellcheck source=./parser.sh disable=SC1091
 source "${SCRIPT_DIR}/parser.sh"
 
 # -----------------------------------------------------------------------------

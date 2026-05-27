@@ -144,9 +144,12 @@ summary::add() {
 
     # Lazy-init so callers that forgot summary::start still get a coherent
     # block; emit a warning event to surface the misuse rather than failing
-    # silently (Principle VIII — observable failure).
+    # silently (Principle VIII — observable failure). We explicitly pass no
+    # arguments through (summary::add's $1/$2 are type/message, not a title)
+    # but spelling it as `summary::start ""` keeps shellcheck SC2119 quiet
+    # without forwarding our own positional args into the lazy-init path.
     if [[ "$_SUMMARY_INITIALISED" != "true" ]]; then
-        summary::start
+        summary::start ""
         _SUMMARY_WARNINGS+=("summary::add called before summary::start; auto-initialised")
         _SUMMARY_COUNTS[warned]=$(( ${_SUMMARY_COUNTS[warned]:-0} + 1 ))
     fi
@@ -217,8 +220,10 @@ summary::emit() {
     # Defensive: tolerate emit-without-start by lazily initialising. The
     # output will be the zero-everything block, which is the right thing to
     # show if a caller threaded summary::emit through an early-return path.
+    # Pass an explicit empty title arg so shellcheck SC2119 doesn't flag the
+    # bare call (summary::start's $1 is the optional title).
     if [[ "$_SUMMARY_INITIALISED" != "true" ]]; then
-        summary::start
+        summary::start ""
     fi
 
     local created="${_SUMMARY_COUNTS[created]:-0}"

@@ -349,6 +349,34 @@ graphql::_request() {
     exit 3
 }
 
+# graphql::_validate_variables <variables_json>
+#
+# Verify that the supplied variables argument is well-formed JSON (or empty,
+# which downstream callers treat as `{}`). Lives outside _build_operation
+# because the validation MUST happen in the calling process — when callers
+# invoke `$(graphql::_build_operation ...)` the body runs in a command-
+# substitution subshell, and `exit 2` from inside that subshell only kills
+# the subshell, leaving the outer caller free to proceed with an empty
+# operation envelope into the HTTP layer. By validating in the parent shell
+# first we guarantee that malformed input halts BEFORE any transport call,
+# satisfying tests/unit/graphql.bats "argument validation: malformed
+# variables JSON exits 2 before any HTTP call".
+graphql::_validate_variables() {
+    local variables="${1:-}"
+
+    # Empty variables are normalised to `{}` by _build_operation, so they
+    # need no validation here — short-circuit success.
+    if [[ -z "$variables" ]]; then
+        return 0
+    fi
+
+    if ! printf '%s' "$variables" | jq -e . >/dev/null 2>&1; then
+        graphql::_log_error \
+            "variables argument is not valid JSON: ${variables}"
+        exit 2
+    fi
+}
+
 # graphql::_build_operation <operation_string> <variables_json>
 #
 # Compose the wire-format JSON envelope. Uses jq's `--arg` for the operation
@@ -356,21 +384,16 @@ graphql::_request() {
 # survives untouched) and `--argjson` for variables (already valid JSON).
 #
 # Empty/omitted variables default to {} so callers can pass "" when their
-# operation takes none.
+# operation takes none. Validation of <variables_json> is the caller's
+# responsibility (graphql::_validate_variables) so that a malformed value
+# can `exit 2` from the parent shell rather than from this function's
+# command-substitution subshell.
 graphql::_build_operation() {
     local operation="$1"
     local variables="${2:-}"
 
     if [[ -z "$variables" ]]; then
         variables='{}'
-    fi
-
-    # Validate variables JSON early — better to fail here with a clear message
-    # than have Linear bounce a malformed request.
-    if ! printf '%s' "$variables" | jq -e . >/dev/null 2>&1; then
-        graphql::_log_error \
-            "variables argument is not valid JSON: ${variables}"
-        exit 2
     fi
 
     jq -n \
@@ -398,6 +421,10 @@ graphql::query() {
     fi
     local query="$1"
     local variables="${2:-}"
+    # Validate BEFORE the command-substitution call below so a bad payload
+    # exits this shell, not just the $(...) subshell. Test contract:
+    # tests/unit/graphql.bats:325.
+    graphql::_validate_variables "$variables"
     local operation_json
     operation_json="$(graphql::_build_operation "$query" "$variables")"
     graphql::_request "$operation_json"
@@ -420,6 +447,10 @@ graphql::mutate() {
     fi
     local mutation="$1"
     local variables="${2:-}"
+    # Validate BEFORE the command-substitution call below so a bad payload
+    # exits this shell, not just the $(...) subshell. Test contract:
+    # tests/unit/graphql.bats:325.
+    graphql::_validate_variables "$variables"
     local operation_json
     operation_json="$(graphql::_build_operation "$mutation" "$variables")"
     graphql::_request "$operation_json"
