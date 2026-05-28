@@ -450,13 +450,37 @@ This command implements (in whole or in part):
 - **FR-033b** — dogfood-safe mode via `SPECKIT_LINEAR_DOGFOOD_SAFE`;
   surfaced in the dependency report and final summary so the
   override is unambiguous.
-- **Principle V** — UUID binding gate; the install captures Team +
-  Project UUIDs so every subsequent operation resolves by UUID.
-- **Principle VI** — OAuth-first via the Linear MCP; long-lived
-  `LINEAR_API_KEY` only appears at the edges (seed, git hooks, the
-  GitHub Action).
-- **Principle VII** — re-runs preserve operator `enabled: false`
-  edits on registered hooks.
+- **FR-034** — operator-identity stamping; the FR-038 `viewer`
+  response is persisted to `linear.operator.{user_id, name, email}`
+  for assigneeId stamping on subsequent reconciles.
+- **FR-037** — API-key resolution order (env var → `.env` → `read -s`
+  prompt) at S1, before any other Linear-aware step; the optional
+  "save to `.env`" path keeps `.env` in `.gitignore`.
+- **FR-038** — single S2 `viewer { id name email … }` verification
+  query; `viewer == null` / non-200 / `errors[]` halts exit 2 with
+  the Linear API-key creation link.
+- **FR-039** — S3 team discovery + numbered picker; one team
+  auto-picks, zero teams halts, and the operator never sees or types
+  a UUID.
+- **FR-040** — S4 project discovery + numbered picker with the
+  "Create new project" option always appended; the operator never
+  sees or types a UUID.
+- **FR-041** — S5 `projectCreate` branch; prompts for a name
+  (repo-basename default), confirms, fires the mutation, and surfaces
+  the new Project's URL (no UUID per SC-010).
+- **FR-042** — all resolved UUIDs (team, project, operator) written
+  to `linear-config.yml` at S6 BEFORE any hook / git-hook / Action
+  step; quitting before S6 leaves no `linear-config.yml`.
+- **FR-043** — hook registration, local git hooks, and the Action
+  install run only AFTER the FR-039 + FR-040 (or FR-041) picks are
+  confirmed; a later-step failure leaves `linear-config.yml` intact.
+- **FR-044** — `--team` / `--project` fast path; both present skips
+  S3 + S4 verbatim (after a quick validity check), `--team` alone
+  scopes S4, `--project` alone resolves the team and skips S3.
+- **FR-045** — `--non-interactive` (alias `--no-prompt`) suppresses
+  every prompt; it requires both `--team` and `--project` or halts
+  exit 2 with a pointer to the v0.1.1 ergonomics path (CI safety
+  contract).
 - **FR-046** — S0 self-install guard via
   `install::detect_self_install` (`cd && pwd -P` canonicalisation,
   no `realpath` dependency); halts exit 2 when SOURCE ==
@@ -468,7 +492,16 @@ This command implements (in whole or in part):
   <archive-zip-URL>` form is the canonical pre-catalog path; the
   `--dev <path>` form runs from a separate consumer repo (FR-046
   bars source-equals-target).
+- **FR-048** — viewer-query reuse; the FR-038 response is the only
+  `viewer` round trip — it also satisfies FR-034 (no second query).
 - **FR-049** — vendored `.git/` detection via
   `install::detect_vendored_git`; warns in the dependency report
   and the final summary's next-steps block, never auto-deletes
   (Principle VIII).
+- **Principle V** — UUID binding gate; the install captures Team +
+  Project UUIDs so every subsequent operation resolves by UUID.
+- **Principle VI** — OAuth-first via the Linear MCP; long-lived
+  `LINEAR_API_KEY` only appears at the edges (seed, git hooks, the
+  GitHub Action).
+- **Principle VII** — re-runs preserve operator `enabled: false`
+  edits on registered hooks.
