@@ -1,4 +1,4 @@
-# Contributing to speckit-linear
+# Contributing to spec-kit-linear
 
 This project is itself a spec-kit feature: every change to the bridge flows through the same `/speckit-*` lifecycle the bridge is built to mirror. So "contributing" here is not "open a PR" — it's drive a spec through specify → clarify → plan → tasks → implement → analyze, and ship the PR at the end of that loop.
 

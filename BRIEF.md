@@ -1,6 +1,6 @@
-# speckit-linear — kickoff brief
+# spec-kit-linear — kickoff brief
 
-This document captures the design decisions reached in a planning conversation in the BLOK9 session on 2026-05-27. Drop this in front of a fresh Claude Code session opened at `~/Code/AI/speckit-linear/` to hit the ground running.
+This document captures the design decisions reached in a planning conversation in the BLOK9 session on 2026-05-27. Drop this in front of a fresh Claude Code session opened at `~/Code/AI/spec-kit-linear/` to hit the ground running.
 
 ## What this is
 
@@ -19,9 +19,9 @@ The operator has 4+ active repos (b9-backend, b9-frontend, project-arc, docs) ru
 - **Standalone GitHub repo**, not part of project-arc, not part of any consuming repo.
 - **Distributed as a Claude Code plugin** (`~/.claude/plugins/`), with a fallback raw-skill install path.
 - **Dual adoption channels:**
-  1. `speckit-linear init` CLI (shipped in repo) — drops `.specify/extensions.yml` + `.mcp.json` into any repo. Standalone, no other deps.
+  1. `spec-kit-linear init` CLI (shipped in repo) — drops `.specify/extensions.yml` + `.mcp.json` into any repo. Standalone, no other deps.
   2. project-arc ADR 0007 (authored later, in `~/.project-arc/decisions/`) — pointers project-arc siblings at this bridge via `project-arc decisions apply`.
-- **No coupling either direction:** speckit-linear works without project-arc; project-arc works without speckit-linear.
+- **No coupling either direction:** spec-kit-linear works without project-arc; project-arc works without spec-kit-linear.
 
 ### Linear data model
 
@@ -100,7 +100,7 @@ The operator may have 1 Linear workspace per GitHub repo (b9-backend → BLOK9 w
 
 1. **Full task mirror vs wave-only mirror?** A spec like 003 produced 85 task Issues if we mirror everything, or ~9 wave Issues if we roll up. Operator usage pattern unclear — recommend resolving via dogfooding both on one spec.
 2. **Linear MCP capability coverage.** Must verify official Linear MCP supports: create/update Project, create/update Issue, attach Issue to milestone, set blocking relations, set Project Status, add/remove labels, post comments. 30-min validation task before committing to the official MCP. If gaps, fall back to `dvcrn/mcp-server-linear` or direct GraphQL via a `scripts/linear-api.ts` (pattern from `twanahc/claude-linear-skill`).
-3. **Workspace seed CLI scope.** A `speckit-linear seed-workspace` command that creates the `phase:*` labels, `wave:*` labels, custom workflow states for tracker Issues. Run once per Linear workspace, before any sync. Should it accept a Team UUID arg, or create a "speckit" Team?
+3. **Workspace seed CLI scope.** A `spec-kit-linear seed-workspace` command that creates the `phase:*` labels, `wave:*` labels, custom workflow states for tracker Issues. Run once per Linear workspace, before any sync. Should it accept a Team UUID arg, or create a "speckit" Team?
 4. **How does sync detect "current phase" when artifacts already exist?** E.g. spec 003 is already merged. When the sync skill is run for the first time against an already-complete spec, it should reconcile to "merged" state. Detection logic: which artifacts exist? Is there a `*.draft` marker? Is the PR open or merged? Git history?
 5. **Ratification marker.** How does the sync skill know clarify round N has been ratified vs is still in flight? Operator-idle window auto-ratification (from BLOK9 session) muddies this. Candidate: a `RATIFIED` marker line in spec.md's Clarifications section, or a `.specify/ratifications.yml` file.
 6. **Task dependency parsing.** Tasks files often encode deps via `[T003-013, T003-014]` style markers in the task header. Parser needs to handle the canonical format and emit Linear blocking relations.
@@ -135,11 +135,11 @@ Spec 002 onwards can dogfood the bridge.
 
 ## Expected first-pass deliverables
 
-- `speckit-linear-sync` skill at `skills/speckit-linear-sync/SKILL.md`
+- `spec-kit-linear-sync` skill at `skills/spec-kit-linear-sync/SKILL.md`
 - `scripts/linear-sync.ts` (or `.py`) — the actual reconcile logic
 - `templates/extensions.yml` — drop-in for each consuming repo's `.specify/`
 - `templates/mcp.json` — drop-in for each consuming repo root
-- `bin/speckit-linear` CLI with `init` + `seed-workspace` subcommands
+- `bin/spec-kit-linear` CLI with `init` + `seed-workspace` subcommands
 - `plugin.json` — Claude Code plugin manifest
 - Working dogfood on at least 1 spec in 1 consuming repo (b9-backend most likely)
 
