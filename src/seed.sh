@@ -161,6 +161,23 @@ readonly -a SEED_TASK_PHASE_LABELS=(
     "task-phase:9"
 )
 
+# Agent label family (FR-036). Sticky workspace-scoped labels identifying
+# which AI agent ran the reconcile. v1 ships the two upstream-supported
+# AI hosts; unrecognised agents fall back to `agent:<lowercased-first-word>`
+# at reconcile time and the bridge mints those labels lazily. Captured
+# UUIDs land in `linear-config.yml.linear.agent_label_uuids` keyed by
+# family name (`claude`, `codex`).
+#
+# Tab-separated rows: <family>\t<label_name>. Family is the dictionary key;
+# label_name is what Linear stores. Color choice: a distinguishable teal
+# (#14B8A6) signals "system label, agent provenance" — adjacent in palette
+# to the existing analyzing/red_team hues without colliding.
+readonly -a SEED_AGENT_LABELS=(
+    $'claude\tagent:claude'
+    $'codex\tagent:codex'
+)
+readonly SEED_AGENT_LABEL_COLOR="#14B8A6"
+
 # Default-state hunt table (FR-005, contracts §4.3). Tab-separated rows:
 # <key>\t<expected_name>\t<expected_type>. We probe by name first (the common
 # stock-Linear-team case where the names match exactly) and fall back to the
@@ -178,6 +195,10 @@ readonly -a SEED_DEFAULT_STATE_LOOKUPS=(
 # plan.md Technical Context).
 declare -gA SEED_WORKFLOW_UUIDS=()         # lifecycle_key → UUID
 declare -gA SEED_DEFAULT_STATE_UUIDS=()    # todo|in_progress|done → UUID
+# FR-036: per-family agent label UUIDs (claude, codex). Written back to
+# linear-config.yml.linear.agent_label_uuids so reconcile.sh can stamp
+# the running agent's family label onto every Issue / sub-issue it touches.
+declare -gA SEED_AGENT_LABEL_UUIDS=()      # claude|codex → UUID
 # SEED_LABEL_UUIDS is populated for diagnostics / future use (label UUIDs are
 # not written to linear-config.yml because reconcile.sh looks labels up by
 # name). The shellcheck SC2034 disable below is intentional — the array
@@ -594,15 +615,22 @@ seed::query_label() {
     esac
 }
 
-# seed::create_label <name>
+# seed::create_label <name> [color]
 #   Issue an `issueLabelCreate` GraphQL mutation. Workspace-scoped (no team).
-#   No color is forced — Linear assigns a sensible default and the operator
-#   may recolour the labels in the UI without breaking lookups (Principle V).
+#   If <color> is omitted, Linear assigns a sensible default; pass a hex
+#   color (e.g. `#14B8A6`) to lock the visual treatment for system label
+#   families that need to be visually distinguishable (FR-036's agent:*).
+#   Recolour in Linear's UI is non-fatal — lookups are by UUID (Principle V).
 seed::create_label() {
     local name="$1"
+    local color="${2:-}"
 
     if (( ARG_DRY_RUN == 1 )); then
-        seed::log "DRY-RUN issueLabelCreate name='${name}' (workspace-scoped)"
+        if [[ -n "$color" ]]; then
+            seed::log "DRY-RUN issueLabelCreate name='${name}' color='${color}' (workspace-scoped)"
+        else
+            seed::log "DRY-RUN issueLabelCreate name='${name}' (workspace-scoped)"
+        fi
         summary::add created "issueLabelCreate ${name} (dry-run)"
         printf '00000000-0000-0000-0000-000000000000\n'
         return 0
@@ -616,7 +644,12 @@ seed::create_label() {
     }'
     local input_json vars
     # No teamId → workspace-scoped per Linear's IssueLabelCreateInput contract.
-    input_json="$(jq -nc --arg name "$name" '{name: $name}')"
+    if [[ -n "$color" ]]; then
+        input_json="$(jq -nc --arg name "$name" --arg color "$color" \
+            '{name: $name, color: $color}')"
+    else
+        input_json="$(jq -nc --arg name "$name" '{name: $name}')"
+    fi
     vars="$(jq -nc --argjson input "$input_json" '{input: $input}')"
 
     local response
@@ -661,6 +694,39 @@ seed::reconcile_labels() {
         seed::log "created label '${name}' → ${uuid}"
         # shellcheck disable=SC2034  # diagnostics-only buffer
         SEED_LABEL_UUIDS[$name]="$uuid"
+    done
+}
+
+# seed::reconcile_agent_labels
+#   FR-036: find-or-create the `agent:claude` / `agent:codex` workspace
+#   labels and capture their UUIDs into SEED_AGENT_LABEL_UUIDS keyed by
+#   family name. Unlike the phase / task-phase families, these UUIDs ARE
+#   written back to linear-config.yml (linear.agent_label_uuids) so
+#   reconcile.sh can resolve them by family without a per-Issue name
+#   lookup. A teal color is forced on create so the family is visually
+#   distinct in Linear's UI; existing labels' colors are left untouched.
+seed::reconcile_agent_labels() {
+    local row family name uuid
+    for row in "${SEED_AGENT_LABELS[@]}"; do
+        IFS=$'\t' read -r family name <<<"$row"
+
+        uuid="$(seed::query_label "$name")"
+        if [[ -n "$uuid" ]]; then
+            seed::log "agent label '${name}' already exists (${uuid}); skipping create"
+            summary::add skipped "label '${name}' already present"
+            # shellcheck disable=SC2034  # diagnostics-only buffer
+            SEED_LABEL_UUIDS[$name]="$uuid"
+            SEED_AGENT_LABEL_UUIDS[$family]="$uuid"
+            continue
+        fi
+
+        if ! uuid="$(seed::create_label "$name" "$SEED_AGENT_LABEL_COLOR")"; then
+            continue
+        fi
+        seed::log "created agent label '${name}' → ${uuid}"
+        # shellcheck disable=SC2034  # diagnostics-only buffer
+        SEED_LABEL_UUIDS[$name]="$uuid"
+        SEED_AGENT_LABEL_UUIDS[$family]="$uuid"
     done
 }
 
@@ -775,6 +841,28 @@ seed::render_default_state_uuid_block() {
     done
 }
 
+# seed::render_agent_label_uuid_block <indent>
+#   Echo the YAML lines for the `agent_label_uuids:` block (FR-036). Keys
+#   are the agent family names (`claude`, `codex`); values are the
+#   workspace label UUIDs captured by seed::reconcile_agent_labels. The
+#   block is always emitted with both keys so reconcile.sh's getter has a
+#   stable lookup target — missing labels surface as the zero placeholder
+#   UUID, which config::get_agent_label_uuid rejects with a remediation
+#   pointer back to /spec-kit-linear-seed.
+seed::render_agent_label_uuid_block() {
+    local indent="$1"
+    local child_indent
+    child_indent="${indent}  "
+
+    printf '%sagent_label_uuids:\n' "$indent"
+
+    local key value
+    for key in claude codex; do
+        value="${SEED_AGENT_LABEL_UUIDS[$key]:-00000000-0000-0000-0000-000000000000}"
+        printf '%s%s: "%s"\n' "$child_indent" "$key" "$value"
+    done
+}
+
 # seed::write_config_uuids
 #   Splice the captured UUIDs into linear-config.yml. Strategy: a pure-bash
 #   line-by-line rewrite that emits every input line verbatim EXCEPT when it
@@ -802,11 +890,12 @@ seed::write_config_uuids() {
 
     seed::ensure_config || return $?
 
-    # Render the two replacement blocks at the canonical indent (2 spaces —
+    # Render the three replacement blocks at the canonical indent (2 spaces —
     # children of `linear:`, sibling of `team:` / `project:`).
-    local wf_block default_block
+    local wf_block default_block agent_block
     wf_block="$(seed::render_workflow_uuid_block "  ")"
     default_block="$(seed::render_default_state_uuid_block "  ")"
+    agent_block="$(seed::render_agent_label_uuid_block "  ")"
 
     local tmp_out
     tmp_out="$(mktemp -t spec-kit-linear-seed.XXXXXX)"
@@ -818,6 +907,7 @@ seed::write_config_uuids() {
     #   state="skip_wf"     — inside an old workflow_state_uuids block; drop
     #                         children, resume on first non-child line
     #   state="skip_default"— inside an old default_state_uuids block; ditto
+    #   state="skip_agent"  — inside an old agent_label_uuids block; ditto
     #
     # in_linear tracks whether we're inside the top-level `linear:` block so
     # we know to append missing replacement blocks before the next top-level
@@ -826,6 +916,7 @@ seed::write_config_uuids() {
     local in_linear=0
     local wf_seen=0
     local default_seen=0
+    local agent_seen=0
     local line
 
     # IFS= + read -r + the `|| [[ -n "$line" ]]` tail preserves the final
@@ -842,6 +933,10 @@ seed::write_config_uuids() {
             if (( default_seen == 0 )); then
                 printf '%s\n' "$default_block" >>"$tmp_out"
                 default_seen=1
+            fi
+            if (( agent_seen == 0 )); then
+                printf '%s\n' "$agent_block" >>"$tmp_out"
+                agent_seen=1
             fi
             in_linear=0
             state="normal"
@@ -875,11 +970,21 @@ seed::write_config_uuids() {
             continue
         fi
 
+        # agent_label_uuids opener (FR-036) — same.
+        if [[ "$state" == "normal" ]] \
+            && [[ "$line" =~ ^[[:space:]]+agent_label_uuids:[[:space:]]*$ ]]; then
+            printf '%s\n' "$agent_block" >>"$tmp_out"
+            agent_seen=1
+            state="skip_agent"
+            continue
+        fi
+
         # While skipping an old replacement block, drop deeply-indented
         # children (4+ spaces) and comments. Any line at 2-or-fewer spaces
         # of indent is a sibling key — exit skip mode and re-process this
         # line as normal by re-emitting through the default branch.
-        if [[ "$state" == "skip_wf" ]] || [[ "$state" == "skip_default" ]]; then
+        if [[ "$state" == "skip_wf" ]] || [[ "$state" == "skip_default" ]] \
+            || [[ "$state" == "skip_agent" ]]; then
             if [[ "$line" =~ ^\ \ \ \ [^[:space:]] ]] \
                 || [[ "$line" =~ ^[[:space:]]+# ]]; then
                 # Indented child / nested comment — drop it.
@@ -902,6 +1007,9 @@ seed::write_config_uuids() {
         fi
         if (( default_seen == 0 )); then
             printf '%s\n' "$default_block" >>"$tmp_out"
+        fi
+        if (( agent_seen == 0 )); then
+            printf '%s\n' "$agent_block" >>"$tmp_out"
         fi
     fi
 
@@ -944,6 +1052,13 @@ main() {
 
     # T059: labels (9 phase:* + 9 task-phase:N = 18 total).
     seed::reconcile_labels
+
+    # FR-036: agent provenance labels (agent:claude, agent:codex). Captured
+    # UUIDs land in SEED_AGENT_LABEL_UUIDS and are written into
+    # linear-config.yml.linear.agent_label_uuids by the splicer below so
+    # reconcile.sh's _resolve_agent_label_id helper can map the running
+    # agent's family name to its label UUID without a per-Issue name lookup.
+    seed::reconcile_agent_labels
 
     # T060 (write-back half): splice captured UUIDs into linear-config.yml.
     seed::write_config_uuids

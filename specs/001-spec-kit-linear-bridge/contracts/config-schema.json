@@ -208,6 +208,23 @@
               "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
             }
           }
+        },
+        "agent_label_uuids": {
+          "type": "object",
+          "description": "Map of AI-agent family name to Linear workspace-label UUID, captured by speckit.linear.seed at workspace-seed time (FR-021, FR-036). Drives the sticky `agent:<family>` label the reconciler stamps onto every Issue and sub-issue it touches, identifying which AI agent ran the reconcile. v1 ships UUIDs for the two canonical families (`claude`, `codex`); non-canonical agents resolved from `AGENT_NAME` at sync time (e.g. `gemini`, `cursor`) mint their labels lazily via the standard issueLabelCreate path and do NOT require an entry here. Block presence is required once seed has run post-FR-036; absence is allowed for backwards compatibility with older configs (reconciler degrades gracefully — no agent stamp, no halt). Lookup is by UUID, never by name — Linear UI renames are safe; deletion of a referenced label surfaces as an explicit error at reconcile time.",
+          "additionalProperties": false,
+          "properties": {
+            "claude": {
+              "type": "string",
+              "description": "Workspace-label UUID for the `agent:claude` family. Stamped onto every Issue / sub-issue reconciled with CLAUDE_CODE_MODEL (or any AGENT_NAME starting with `claude`) set in the environment.",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "codex": {
+              "type": "string",
+              "description": "Workspace-label UUID for the `agent:codex` family. Stamped onto every Issue / sub-issue reconciled with CODEX_MODEL (or any AGENT_NAME starting with `codex` / `gpt`) set in the environment.",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            }
+          }
         }
       }
     },

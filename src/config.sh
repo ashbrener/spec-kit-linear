@@ -73,6 +73,16 @@ readonly -a CONFIG_DEFAULT_STATE_KEYS=(
     "done"
 )
 
+# Agent identity families recognised by the v1 reconcile path (FR-036).
+# Anything outside this list still resolves via the AGENT_NAME env-var
+# fallback in reconcile::_resolve_running_agent, lazy-minting an
+# `agent:<lowercased-first-word>` label at sync time; the seed step only
+# captures UUIDs for the v1 canonical families up-front.
+readonly -a CONFIG_AGENT_FAMILIES=(
+    "claude"
+    "codex"
+)
+
 # ---------------------------------------------------------------------------
 # Internal helpers.
 # ---------------------------------------------------------------------------
@@ -394,6 +404,65 @@ hint: valid keys are ${CONFIG_DEFAULT_STATE_KEYS[*]}"
 hint: run \`/spec-kit-linear-seed\` to capture stock team-state UUIDs (todo/in_progress/done)"
     fi
     printf '%s\n' "${value}"
+}
+
+# config::get_agent_label_uuid <agent_family>
+# Echo the workspace label UUID for one of the canonical agent families
+# (`claude`, `codex`) captured by /spec-kit-linear-seed (FR-036). The
+# accessor is asymmetric on purpose:
+#   * Empty <agent_family> ⇒ echo empty + return 0. This is the
+#     "no AGENT_NAME / CLAUDE_CODE_MODEL / CODEX_MODEL env var resolved"
+#     graceful-degradation path described in FR-036 — the bridge MUST
+#     keep working when the running shell has no AI agent context, just
+#     without an `agent:*` stamp.
+#   * Block missing AND non-empty <agent_family> ⇒ halt with a clear
+#     remediation pointer. An operator who has an AI agent active but
+#     hasn't re-run seed since FR-036 landed needs a hard nudge, not a
+#     silent skip; lookups-by-UUID-not-name (Principle V) means we can't
+#     safely guess the UUID at reconcile time.
+#   * Block present but family key absent ⇒ echo empty + return 0. This
+#     is the "unrecognised agent" case (e.g. AGENT_NAME=gemini); the
+#     resolver upstream lazy-mints `agent:gemini` via Linear's standard
+#     issueLabelCreate path so v1 never has to ship every possible
+#     agent family up-front.
+config::get_agent_label_uuid() {
+    config::_require_loaded
+    if (( $# != 1 )); then
+        config::_die "config::get_agent_label_uuid requires exactly one argument (agent family, e.g. 'claude')"
+    fi
+
+    local family="$1"
+
+    # Graceful degradation when the resolver upstream couldn't identify
+    # the running agent (no env var matched). Empty family ⇒ empty
+    # output ⇒ caller omits the label stamp entirely.
+    if [[ -z "$family" ]]; then
+        printf ''
+        return 0
+    fi
+
+    # Detect "block entirely missing" by checking whether ANY family key
+    # has been parsed under linear.agent_label_uuids.*. If at least one
+    # is present, the seed step has clearly run post-FR-036; if none are,
+    # the operator needs to re-seed before stamping can work.
+    local block_present=0
+    local probe
+    for probe in "${CONFIG_AGENT_FAMILIES[@]}"; do
+        if [[ -n "${CONFIG_VALUES[linear.agent_label_uuids.${probe}]:-}" ]]; then
+            block_present=1
+            break
+        fi
+    done
+
+    if (( block_present == 0 )); then
+        config::_die "${CONFIG_LOADED_PATH}: linear.agent_label_uuids block is missing but an agent identifier ('${family}') was resolved
+hint: run \`/spec-kit-linear-seed\` to create the agent:* labels and capture their UUIDs (FR-036)"
+    fi
+
+    # Block present but this specific family was not seeded — silently
+    # return empty. The reconciler's _resolve_agent_label_id helper will
+    # treat this as "no canonical UUID; fall back to lazy-create by name".
+    printf '%s\n' "${CONFIG_VALUES[linear.agent_label_uuids.${family}]:-}"
 }
 
 # config::validate

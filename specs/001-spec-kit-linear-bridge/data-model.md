@@ -306,7 +306,7 @@ One Linear Issue per spec. The central entity the bridge manipulates.
 | `teamId` | UUID | bridge | = `linear.team.id` |
 | `projectId` | UUID | bridge | = `linear.project.id` |
 | `stateId` | UUID | bridge | one of `workflow_state_uuids.*`, computed from `lifecycle_phase` (§ 6) |
-| `labelIds[]` | UUID[] | bridge | always contains `phase:<current>` and `speckit-spec:NNN`; possibly other operator-added labels (preserved) |
+| `labelIds[]` | UUID[] | bridge | always contains `phase:<current>` and `speckit-spec:NNN`; also carries one sticky `agent:<family>` label per AI agent that has reconciled this Issue (FR-036); possibly other operator-added labels (preserved) |
 | `parentId` | UUID? | n/a | spec Issues have no parent |
 | `priority` | int? | n/a | not set by bridge |
 | `assigneeId` | UUID? | bridge (create only) | set to `linear.operator.user_id` from config on every `issueCreate` (FR-034); NOT passed on `issueUpdate` so manual reassignment in Linear's UI persists. Absent config block → unassigned with one warning per reconcile run (graceful degradation). |
@@ -331,9 +331,16 @@ The memory block itself is the markdown table emitted by
 | **Branch** | `<feature-branch>` |
 | **Worktree(s)** | `<absolute-path-1>` [, `<absolute-path-2>`, …] |
 | **Last touched** | YYYY-MM-DDTHH:MM:SSZ |
+| **Last reconciled by** | `<agent-model-id>` · YYYY-MM-DDTHH:MM:SSZ |
 | **Source** | [GitHub →](<github-url-to-specs/NNN-feature/>) |
 | **Spec** | NNN-<short-name> |
 ```
+
+The `**Last reconciled by**` row (FR-036) is conditional: emitted only
+when the running shell exposes `CLAUDE_CODE_MODEL`, `CODEX_MODEL`, or
+`AGENT_NAME`. Its timestamp is co-bound to the description idempotency
+probe — a no-op reconcile by a different agent MUST NOT mutate just
+to refresh the timestamp (preserves SC-002).
 
 **Invariants**
 
@@ -359,7 +366,7 @@ One Linear sub-issue per task phase (`## Phase N:` block in
 | `teamId` | UUID | bridge | = `linear.team.id` |
 | `projectId` | UUID | bridge | = `linear.project.id` |
 | `stateId` | UUID | bridge | task-phase progress state — Todo / In Progress / Done (using team's stock states; not the bridge's nine spec-phase states) |
-| `labelIds[]` | UUID[] | bridge | contains `task-phase:N` |
+| `labelIds[]` | UUID[] | bridge | contains `task-phase:N`; also carries one sticky `agent:<family>` label per AI agent that has reconciled this sub-issue (FR-036) |
 
 **Checklist description schema** (FR-006):
 
@@ -385,7 +392,7 @@ One Linear sub-issue per task phase (`## Phase N:` block in
 
 ### 3.6 Label
 
-Linear `IssueLabel` records. Three label families used by the bridge,
+Linear `IssueLabel` records. Four label families used by the bridge,
 all parent-grouped per the workspace probe.
 
 | Family | Naming | Scope | Lifecycle |
@@ -393,6 +400,7 @@ all parent-grouped per the workspace probe.
 | `phase:*` | `phase:specifying`, `phase:clarifying`, …, `phase:merged` | team (children of `phase` parent group) | 9 created by seed (FR-021) |
 | `task-phase:*` | `task-phase:1`, `task-phase:2`, … | team (children of `task-phase` parent group) | minted lazily at sync time |
 | `speckit-spec:*` | `speckit-spec:001`, `speckit-spec:002`, … | team (children of `speckit-spec` parent group) | minted lazily on first Issue creation (FR-004b) |
+| `agent:*` | `agent:claude`, `agent:codex`, …, `agent:<lowercased-first-word>` | workspace (set by bridge; sticky) | 2 canonical (`agent:claude`, `agent:codex`) created by seed (FR-021 / FR-036) with UUIDs captured into `linear.agent_label_uuids`; non-canonical families minted lazily by reconcile at sync time. Once applied to an Issue / sub-issue the bridge MUST NOT remove the label — cross-agent provenance is preserved. |
 
 | Field | Type | Notes |
 |---|---|---|

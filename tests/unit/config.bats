@@ -33,6 +33,8 @@ UUID_MERGED="aaaaaaaa-0001-0000-0000-000000000009"
 UUID_TODO="bbbbbbbb-0002-0000-0000-000000000001"
 UUID_IN_PROGRESS="bbbbbbbb-0002-0000-0000-000000000002"
 UUID_DONE="bbbbbbbb-0002-0000-0000-000000000003"
+UUID_AGENT_CLAUDE="cccccccc-0003-0000-0000-000000000001"
+UUID_AGENT_CODEX="cccccccc-0003-0000-0000-000000000002"
 
 setup() {
     TEST_TMP="$(mktemp -d "${BATS_TMPDIR:-/tmp}/speckit-config-XXXXXX")"
@@ -81,6 +83,9 @@ linear:
     todo:        "${UUID_TODO}"
     in_progress: "${UUID_IN_PROGRESS}"
     done:        "${UUID_DONE}"
+  agent_label_uuids:
+    claude:      "${UUID_AGENT_CLAUDE}"
+    codex:       "${UUID_AGENT_CODEX}"
 
 sync:
   enabled: true
@@ -219,6 +224,82 @@ EOF
     run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_default_state_uuid blocked"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"unknown default-state key: blocked"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Agent label UUID lookup (FR-036)
+# ---------------------------------------------------------------------------
+
+@test "config::get_agent_label_uuid returns claude UUID when present" {
+    run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_agent_label_uuid claude"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "${UUID_AGENT_CLAUDE}" ]
+}
+
+@test "config::get_agent_label_uuid returns codex UUID when present" {
+    run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_agent_label_uuid codex"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "${UUID_AGENT_CODEX}" ]
+}
+
+@test "config::get_agent_label_uuid returns empty when family absent from block" {
+    # Block exists with codex but not gemini. Non-canonical family lookups
+    # are not invalid — they're "no canonical UUID, fall back to lazy mint
+    # by name at reconcile time", so the getter must return empty + 0.
+    run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_agent_label_uuid gemini"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+}
+
+@test "config::get_agent_label_uuid returns empty when family argument is empty (graceful)" {
+    # The reconciler calls this with an empty family when no env var
+    # resolves. FR-036 graceful degradation: empty in ⇒ empty out, no halt.
+    run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_agent_label_uuid ''"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+}
+
+@test "config::get_agent_label_uuid halts when block is missing AND family non-empty" {
+    local no_agents="${TEST_TMP}/no-agent-block.yml"
+    write_valid_config "${no_agents}"
+    # Strip the agent_label_uuids block and its two children.
+    awk '
+        /^  agent_label_uuids:/ { in_block = 1; next }
+        in_block && /^    / { next }
+        { in_block = 0; print }
+    ' "${no_agents}" > "${no_agents}.tmp"
+    mv "${no_agents}.tmp" "${no_agents}"
+
+    run bash -c "source '${CONFIG_SH}'; config::load '${no_agents}'; config::get_agent_label_uuid claude"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"linear.agent_label_uuids block is missing"* ]]
+    [[ "${output}" == *"spec-kit-linear-seed"* ]]
+}
+
+@test "config::get_agent_label_uuid stays graceful when block is missing AND family is empty" {
+    # The reconciler can run without ANY AI agent context (manual push from
+    # a worker). In that case it calls the getter with empty family AND the
+    # block may also be missing on a stale config — neither condition is a
+    # failure on its own. Only the BOTH-non-empty AND BOTH-missing pairing
+    # halts.
+    local no_agents="${TEST_TMP}/no-agent-block-2.yml"
+    write_valid_config "${no_agents}"
+    awk '
+        /^  agent_label_uuids:/ { in_block = 1; next }
+        in_block && /^    / { next }
+        { in_block = 0; print }
+    ' "${no_agents}" > "${no_agents}.tmp"
+    mv "${no_agents}.tmp" "${no_agents}"
+
+    run bash -c "source '${CONFIG_SH}'; config::load '${no_agents}'; config::get_agent_label_uuid ''"
+    [ "${status}" -eq 0 ]
+    [ -z "${output}" ]
+}
+
+@test "config::get_agent_label_uuid rejects zero-argument call" {
+    run bash -c "source '${CONFIG_SH}'; config::load '${VALID_YAML}'; config::get_agent_label_uuid"
+    [ "${status}" -eq 2 ]
+    [[ "${output}" == *"requires exactly one argument"* ]]
 }
 
 # ---------------------------------------------------------------------------

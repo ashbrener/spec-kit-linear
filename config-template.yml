@@ -75,6 +75,15 @@ linear:
     todo:           "00000000-0000-0000-0000-000000000000"   # Required (FR-032) — sub-issue created, not yet started
     in_progress:    "00000000-0000-0000-0000-000000000000"   # Required (FR-032) — task row in-flight
     done:           "00000000-0000-0000-0000-000000000000"   # Required (FR-032) — task row ticked complete
+  # Agent provenance label UUIDs (FR-036). The seed step creates the
+  # workspace-scoped `agent:claude` / `agent:codex` labels and captures
+  # their UUIDs here so the reconciler can stamp every Issue / sub-issue
+  # with a sticky family label identifying which AI agent ran the sync.
+  # Non-canonical agents (resolved from AGENT_NAME, e.g. `gemini`) mint
+  # their labels lazily at sync time and do NOT require an entry here.
+  agent_label_uuids:
+    claude:         "00000000-0000-0000-0000-000000000000"   # FR-036 — set by seed
+    codex:          "00000000-0000-0000-0000-000000000000"   # FR-036 — set by seed
 
 # Behavior toggles — operator-tweakable.
 sync:

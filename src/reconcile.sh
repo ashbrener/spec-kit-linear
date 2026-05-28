@@ -131,6 +131,27 @@ declare -gA _RECONCILE_LABEL_ID_CACHE=()
 # exactly once per reconcile run rather than once per Issue created.
 declare -g _RECONCILE_OPERATOR_WARNED=0
 
+# FR-036 graceful-degradation flag — set to 1 the first time
+# reconcile::_resolve_running_agent sees an empty env-var trio
+# (CLAUDE_CODE_MODEL / CODEX_MODEL / AGENT_NAME) so the
+# "no agent identifier resolved" diagnostic fires exactly once
+# per reconcile run rather than once per Issue created. NOT a
+# warning — absence of an AI agent context is a legitimate
+# operating mode (manual /spec-kit-linear-push invocation from a
+# plain shell, CI worker, etc.), so we only log it at debug level
+# via reconcile::log. The label stamp is silently omitted.
+declare -g _RECONCILE_AGENT_RESOLVED_LOGGED=0
+
+# FR-036 cached resolver output. _resolve_running_agent populates
+# these on first call and every subsequent call short-circuits to
+# the cached values — so the same env-var trio is read once per
+# reconcile run, not once per Issue / sub-issue site. Empty values
+# mean "no agent identifier resolved" (graceful degradation: stamp
+# is omitted).
+declare -g _RECONCILE_AGENT_FAMILY=""
+declare -g _RECONCILE_AGENT_MODEL=""
+declare -g _RECONCILE_AGENT_RESOLVED=0
+
 # Diagrams-block "no GitHub remote" warning latch — same one-shot
 # pattern as the operator-assignee warning above. Flipped on the
 # first render_diagrams_block call that can't resolve a github.com
@@ -510,10 +531,47 @@ reconcile::render_memory_block() {
         *)              phase_display="$(printf '%s' "$lifecycle_phase" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')" ;;
     esac
 
+    # FR-036: append a `Last reconciled by` row when an AI agent is
+    # driving the reconcile (CLAUDE_CODE_MODEL / CODEX_MODEL / AGENT_NAME).
+    # Empty model ⇒ omit the row entirely so plain-shell reconciles
+    # (manual /spec-kit-linear-push from a worker, CI without an agent
+    # identifier) render the memory block unchanged. Co-bound to the
+    # existing description idempotency probe upstream: a no-op
+    # reconcile by a different agent will NOT mutate just to bump this
+    # row — sync_spec_issue's description diff is what decides whether
+    # to write.
+    #
+    # Format: ISO 8601 UTC timestamp (matches FR-036 brief), backtick-
+    # delimited model ID. Row order is fixed: directly after "Last
+    # touched" so the audit trail reads top-down ("last touched by
+    # human, last reconciled by agent").
+    reconcile::_resolve_running_agent
+    local last_reconciled_row=""
+    if [[ -n "$_RECONCILE_AGENT_MODEL" ]]; then
+        local ts
+        ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+        if [[ -n "$ts" ]]; then
+            last_reconciled_row="| **Last reconciled by** | \`${_RECONCILE_AGENT_MODEL}\` · ${ts} |"
+        fi
+    fi
+
     # Markdown table — fixed column order (Field / Value). The caller
     # (compose_issue_description) concatenates this block into the
     # bridge-owned description body.
-    cat <<EOF
+    if [[ -n "$last_reconciled_row" ]]; then
+        cat <<EOF
+| Field | Value |
+|---|---|
+| **Phase** | ${phase_display} |
+| **Branch** | \`${feature_branch}\` |
+| **Worktree(s)** | ${worktree_cell} |
+| **Last touched** | ${last_touched_cell} |
+${last_reconciled_row}
+| **Source** | ${source_cell} |
+| **Spec** | ${feature_number}-${short_name} |
+EOF
+    else
+        cat <<EOF
 | Field | Value |
 |---|---|
 | **Phase** | ${phase_display} |
@@ -523,6 +581,32 @@ reconcile::render_memory_block() {
 | **Source** | ${source_cell} |
 | **Spec** | ${feature_number}-${short_name} |
 EOF
+    fi
+}
+
+# =============================================================================
+# reconcile::_strip_last_reconciled_row <description>
+#
+# Echo the input description with any `| **Last reconciled by** | ... |`
+# row removed. FR-036 co-binding helper: the row's timestamp would
+# otherwise mutate on every reconcile, breaking SC-002's zero-churn
+# guarantee on a no-op sync. Stripping it from BOTH sides of the
+# description diff lets the idempotency probe ask "did anything else
+# change?"; on yes, the full body (including the fresh timestamp)
+# rewrites; on no, neither side mutates.
+#
+# Implementation: pure sed — the row is a single line at known
+# position (between "Last touched" and "Source") with a fixed prefix.
+# Matched permissively in case Linear's renderer round-trips the
+# whitespace slightly differently than we emit it. The trailing
+# `^$` consolidation collapses any blank line left behind so the
+# resulting body byte-matches an originally-row-less description.
+# =============================================================================
+reconcile::_strip_last_reconciled_row() {
+    local body="$1"
+    # sed handles macOS / Linux portably here — the pattern only uses
+    # POSIX BRE features.
+    printf '%s' "$body" | sed '/^| \*\*Last reconciled by\*\* |.*|$/d'
 }
 
 # =============================================================================
@@ -1092,6 +1176,146 @@ reconcile::_resolve_operator_assignee_id() {
 }
 
 # =============================================================================
+# FR-036 — Running-agent identity resolution.
+#
+# Resolves which AI agent is driving the current reconcile by probing a
+# fixed env-var order:
+#
+#   1. CLAUDE_CODE_MODEL  — set by Claude Code in every session
+#   2. CODEX_MODEL        — set by Codex / GPT-5.x hosts
+#   3. AGENT_NAME         — generic fallback for any other AI host that
+#                           opts into the protocol
+#
+# The first non-empty wins. The resolved value (full model ID like
+# `claude-opus-4-7`) is exposed via _RECONCILE_AGENT_MODEL for the
+# memory block's `Last reconciled by:` row. The family identifier
+# (`claude`, `codex`, or `<lowercased-first-word>` for unrecognised
+# agents) drives the `agent:<family>` label stamp.
+#
+# Family-name mapping rules (locked by FR-036 brief):
+#   * Anything starting with `claude` (case-insensitive) → `claude`
+#   * Anything starting with `codex` or `gpt` → `codex` (Codex hosts
+#     surface their GPT-* model IDs verbatim)
+#   * Otherwise: lowercased first whitespace-/dash-separated word.
+#     Example: AGENT_NAME="Gemini 2.5 Pro" → family `gemini`.
+#
+# All three env vars empty ⇒ both _RECONCILE_AGENT_FAMILY and
+# _RECONCILE_AGENT_MODEL stay empty (graceful degradation: caller
+# skips the label stamp AND the memory-block row). Matches FR-034 /
+# FR-035 patterns; never escalates to a hard failure.
+#
+# Cached per reconcile run via _RECONCILE_AGENT_RESOLVED so the env
+# probe fires exactly once even when sweep mode (--all) hits N specs.
+# Reads /dev/null from Linear — pure-local resolution.
+# =============================================================================
+reconcile::_resolve_running_agent() {
+    if (( _RECONCILE_AGENT_RESOLVED == 1 )); then
+        return 0
+    fi
+    _RECONCILE_AGENT_RESOLVED=1
+
+    local model="" family=""
+    if [[ -n "${CLAUDE_CODE_MODEL:-}" ]]; then
+        model="${CLAUDE_CODE_MODEL}"
+    elif [[ -n "${CODEX_MODEL:-}" ]]; then
+        model="${CODEX_MODEL}"
+    elif [[ -n "${AGENT_NAME:-}" ]]; then
+        model="${AGENT_NAME}"
+    fi
+
+    if [[ -z "$model" ]]; then
+        # Empty trio — graceful skip. Log once per reconcile so an
+        # operator running from a plain shell sees an audit breadcrumb,
+        # but never surfaces as a summary::add warning (legitimate
+        # operating mode).
+        if (( _RECONCILE_AGENT_RESOLVED_LOGGED == 0 )); then
+            reconcile::log "FR-036: no agent identifier resolved (CLAUDE_CODE_MODEL / CODEX_MODEL / AGENT_NAME all empty); agent:* stamping skipped"
+            _RECONCILE_AGENT_RESOLVED_LOGGED=1
+        fi
+        _RECONCILE_AGENT_FAMILY=""
+        _RECONCILE_AGENT_MODEL=""
+        return 0
+    fi
+
+    # Derive the family. Compare lowercased so case quirks in the env
+    # var (`Claude-Opus-4-7`, `GPT-5.4`) don't bypass the canonical map.
+    local model_lc
+    model_lc="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$model_lc" == claude* ]]; then
+        family="claude"
+    elif [[ "$model_lc" == codex* || "$model_lc" == gpt* ]]; then
+        family="codex"
+    else
+        # Lowercased first whitespace-/dash-separated word.
+        local first_word
+        first_word="${model_lc%%[[:space:]-]*}"
+        if [[ -z "$first_word" ]]; then
+            # Defensive: if the value was nothing but whitespace, fall
+            # back to "unknown" so we never emit `agent:` (empty family).
+            first_word="unknown"
+        fi
+        family="$first_word"
+    fi
+
+    _RECONCILE_AGENT_FAMILY="$family"
+    _RECONCILE_AGENT_MODEL="$model"
+
+    if (( _RECONCILE_AGENT_RESOLVED_LOGGED == 0 )); then
+        reconcile::log "FR-036: running agent resolved → family='${family}' model='${model}'"
+        _RECONCILE_AGENT_RESOLVED_LOGGED=1
+    fi
+}
+
+# reconcile::_resolve_agent_label_id
+#   Convenience wrapper: trigger the env-var resolver, then map the
+#   family name to its workspace label UUID via config::get_agent_label_uuid.
+#   Returns the empty string when EITHER side resolves to empty (no
+#   agent identifier, or seed has no UUID for this family yet — the
+#   latter case applies when AGENT_NAME identifies a non-canonical agent
+#   like `gemini` for which the seed step doesn't ship a fixed UUID).
+#   In that case the caller skips the agent-label stamp; the cross-agent
+#   provenance is still preserved via the memory-block `Last reconciled by`
+#   row, which depends only on the model string.
+reconcile::_resolve_agent_label_id() {
+    reconcile::_resolve_running_agent
+    if [[ -z "$_RECONCILE_AGENT_FAMILY" ]]; then
+        printf ''
+        return 0
+    fi
+
+    # Lazy mint for non-canonical families. The seed step only captures
+    # UUIDs for claude / codex up-front; AGENT_NAME=gemini → family
+    # `gemini` → no canonical UUID. Fall through to the lazy-create path
+    # used for speckit-spec:NNN so cross-agent provenance still works
+    # for any AI host that opts in.
+    local family="$_RECONCILE_AGENT_FAMILY"
+    local uuid=""
+
+    # Canonical families: read from linear-config.yml. config::get_agent_label_uuid
+    # halts with exit 2 if the block is entirely missing — that's
+    # operator-actionable and correct (seed hasn't run since FR-036).
+    case "$family" in
+        claude|codex)
+            uuid="$(config::get_agent_label_uuid "$family")"
+            ;;
+        *)
+            # Non-canonical family — lazy-mint by name via the standard
+            # label resolver (allow_create=1 path). Cache hit on
+            # subsequent calls in the same reconcile run.
+            local label_name="agent:${family}"
+            if uuid="$(reconcile::_resolve_label_id "$label_name" "1")"; then
+                : # success; uuid populated
+            else
+                uuid=""
+            fi
+            ;;
+    esac
+
+    printf '%s' "$uuid"
+}
+
+# =============================================================================
 # Mutation primitives — every Linear write the reconciler issues funnels
 # through one of these, so --dry-run can intercept them uniformly.
 #
@@ -1524,6 +1748,21 @@ reconcile::sync_spec_issue() {
         local labels_json
         labels_json="$(reconcile::_resolve_label_ids_array "$spec_label" "$phase_label")"
 
+        # FR-036: stamp the running agent's family label
+        # (agent:claude / agent:codex / ...) alongside the canonical
+        # speckit-spec + phase labels. Sticky — never removed by the
+        # update branch below, so an Issue touched by both Claude and
+        # Codex shows BOTH labels (cross-agent provenance preserved).
+        # Empty agent_label_id ⇒ no env var resolved OR the operator's
+        # seed step hasn't captured a UUID for this family yet — degrade
+        # gracefully and skip the stamp.
+        local agent_label_id
+        agent_label_id="$(reconcile::_resolve_agent_label_id)"
+        if [[ -n "$agent_label_id" ]]; then
+            labels_json="$(printf '%s' "$labels_json" | jq -c \
+                --arg id "$agent_label_id" '. + [$id] | unique')"
+        fi
+
         # FR-034: stamp assigneeId on issueCreate so the operator owns
         # newly-minted spec Issues. NEVER pass assigneeId on issueUpdate
         # (single-write-on-create) so manual reassignment in Linear's
@@ -1625,10 +1864,26 @@ reconcile::sync_spec_issue() {
     desired_description="$(reconcile::compose_issue_description \
         "$overview_block" "$memory_block" "$diagrams_block")"
 
+    # FR-036 co-binding: the `Last reconciled by` row's timestamp would
+    # mutate the desired description on EVERY reconcile, defeating the
+    # SC-002 zero-churn guarantee. Strip both rows before diffing so the
+    # idempotency probe sees "did anything ELSE change?". When the
+    # answer is yes, the description rewrites WITH the fresh timestamp;
+    # when no, both branches end here and Linear stays untouched.
+    local current_for_diff desired_for_diff
+    current_for_diff="$(reconcile::_strip_last_reconciled_row "$current_description")"
+    desired_for_diff="$(reconcile::_strip_last_reconciled_row "$desired_description")"
+
     # Compute the desired label set: preserve operator-added labels,
     # add (or keep) spec_label + phase_label, remove any stale phase:*
     # label that doesn't match the current lifecycle. Special case for
     # Merged per FR-013: no phase:* label at all.
+    #
+    # FR-036 sticky semantics: any existing `agent:*` label survives
+    # the strip-and-rebuild because the `startswith("phase:")` /
+    # `select(. != $spec)` filter doesn't touch it. The running agent's
+    # family label is appended below; jq's `unique` collapses the
+    # double-add when the running agent matches a prior one.
     local desired_labels_json
     if [[ "$lifecycle_phase" == "merged" ]]; then
         desired_labels_json="$(printf '%s' "$current_labels" | jq -c \
@@ -1643,13 +1898,28 @@ reconcile::sync_spec_issue() {
              + [$spec, $phase]')"
     fi
 
+    # FR-036: add the running agent's family label to the desired set.
+    # Sticky-add semantic — prior `agent:*` labels from earlier reconciles
+    # are preserved (jq filter above doesn't strip them) and the new
+    # family is appended via `unique` so a Claude → Codex → Claude
+    # sequence still ends with both `agent:claude` and `agent:codex`
+    # attached. Empty resolver result ⇒ leave the set untouched (graceful
+    # degradation: no env var, or seed hasn't run for this family).
+    reconcile::_resolve_running_agent
+    if [[ -n "$_RECONCILE_AGENT_FAMILY" ]]; then
+        local agent_label_name="agent:${_RECONCILE_AGENT_FAMILY}"
+        desired_labels_json="$(printf '%s' "$desired_labels_json" | jq -c \
+            --arg label "$agent_label_name" \
+            '. + [$label] | unique')"
+    fi
+
     # Build the diff input. Only include fields that actually changed.
     local update_input='{}'
     if [[ "$current_title" != "$title" ]]; then
         update_input="$(printf '%s' "$update_input" | jq -c \
             --arg title "$title" '. + {title: $title}')"
     fi
-    if [[ "$current_description" != "$desired_description" ]]; then
+    if [[ "$current_for_diff" != "$desired_for_diff" ]]; then
         update_input="$(printf '%s' "$update_input" | jq -c \
             --arg description "$desired_description" \
             '. + {description: $description}')"
@@ -1758,6 +2028,19 @@ reconcile::sync_task_phase_subissues() {
             # this sub-issue (the labels_json comes back as `[]`).
             local labels_json
             labels_json="$(reconcile::_resolve_label_ids_array "$phase_label")"
+
+            # FR-036: stamp the running agent's family label on the
+            # sub-issue too. Same sticky semantics as the parent spec
+            # Issue — once attached, never removed by the update branch
+            # below. Cross-agent provenance is per-Issue, so the
+            # sub-issue carries its own agent stamps independent of
+            # what the parent shows.
+            local sub_agent_label_id
+            sub_agent_label_id="$(reconcile::_resolve_agent_label_id)"
+            if [[ -n "$sub_agent_label_id" ]]; then
+                labels_json="$(printf '%s' "$labels_json" | jq -c \
+                    --arg id "$sub_agent_label_id" '. + [$id] | unique')"
+            fi
 
             # FR-034: stamp assigneeId on issueCreate for the sub-issue
             # too; sub-issues for task phases inherit the same operator
@@ -1892,6 +2175,18 @@ reconcile::sync_task_phase_subissues() {
             desired_labels="$(printf '%s' "$cur_labels" | jq -c \
                 --arg label "$phase_label" \
                 '. + ([$label] - .) | unique')"
+
+            # FR-036: sticky-add the running agent's family label. Same
+            # rationale as the spec Issue update branch above — prior
+            # `agent:*` labels survive the union, new family appends,
+            # `unique` collapses duplicates.
+            reconcile::_resolve_running_agent
+            if [[ -n "$_RECONCILE_AGENT_FAMILY" ]]; then
+                local sub_agent_label_name="agent:${_RECONCILE_AGENT_FAMILY}"
+                desired_labels="$(printf '%s' "$desired_labels" | jq -c \
+                    --arg label "$sub_agent_label_name" \
+                    '. + [$label] | unique')"
+            fi
 
             local sub_update='{}'
             if [[ "$cur_title" != "$sub_title" ]]; then

@@ -538,6 +538,52 @@ intermediate phase transitions appearing in Linear's activity log.
   Linear and lets Linear's team-level estimation scale handle
   rounding or rejection.
 
+#### Agent identity (FR-036)
+
+- **FR-036**: Each Linear Issue and sub-issue the bridge writes MUST
+  carry agent provenance identifying which AI agent (Claude Code,
+  Codex, etc.) ran the reconcile.
+  Specifically, every `issueCreate` and `issueUpdate` mutation the
+  reconciler issues MUST:
+  - Attach a workspace label from the `agent:*` family identifying
+    the running AI agent's family (e.g. `agent:claude`,
+    `agent:codex`). The label is **sticky** — once applied, the
+    bridge MUST NOT remove it. A subsequent reconcile by a different
+    agent MUST add the new `agent:Y` label alongside the existing
+    `agent:X`, so an Issue touched by both Claude and Codex carries
+    both labels (cross-agent provenance preserved).
+  - Append a `**Last reconciled by**` row to the spec Issue's
+    memory block, containing the full model identifier and an ISO
+    8601 UTC timestamp (e.g. `` `claude-opus-4-7` · 2026-05-28T11:30Z ``).
+    The row MUST sit directly after the existing `**Last touched**`
+    row. This row's timestamp MUST be co-bound to the existing
+    description idempotency probe — a no-op reconcile by a different
+    model MUST NOT mutate the Issue just to refresh the timestamp
+    (SC-002's zero-churn guarantee is non-negotiable).
+  The bridge MUST resolve the running agent's identity from
+  environment variables in this fixed precedence order:
+  1. `CLAUDE_CODE_MODEL` — set by Claude Code in every session
+  2. `CODEX_MODEL` — set by Codex / GPT-5.x hosts
+  3. `AGENT_NAME` — generic fallback for other AI hosts
+  The first non-empty wins. The full value is preserved in the
+  memory-block row; the family label is derived as follows:
+  - Values starting with `claude` → `agent:claude`
+  - Values starting with `codex` or `gpt` → `agent:codex` (Codex
+    hosts surface their GPT-* model IDs verbatim)
+  - Otherwise → `agent:<lowercased-first-word>` (e.g.
+    `AGENT_NAME="Gemini 2.5 Pro"` → `agent:gemini`); lazy-minted
+    via the standard `issueLabelCreate` path at sync time
+  If all three environment variables are empty, the bridge MUST
+  omit BOTH the label stamp AND the memory-block row entirely
+  (graceful degradation — same posture as FR-034 / FR-035).
+  The seed step (FR-021) MUST create the canonical `agent:claude`
+  and `agent:codex` workspace labels and capture their UUIDs into
+  `linear-config.yml.linear.agent_label_uuids` per FR-032, keyed
+  by family name (`claude`, `codex`). Lookup is by UUID, never by
+  name, so a recoloured / renamed label in Linear's UI MUST NOT
+  break the bridge; deletion of a referenced label surfaces as an
+  explicit error at reconcile time.
+
 #### Setup, auth, and multi-workspace
 
 - **FR-018**: The bridge MUST be installable into a consumer repo via
@@ -704,11 +750,17 @@ intermediate phase transitions appearing in Linear's activity log.
   Mirrors to one Linear **Project** per repo.
 - **Spec**: The unit of work on the filesystem
   (`specs/NNN-feature/`). Identified by its feature number (`NNN`).
-  Mirrors to one Linear **Issue** inside the repo's Project.
+  Mirrors to one Linear **Issue** inside the repo's Project. The
+  Issue carries (a) a `speckit-spec:NNN` label (FR-004b),
+  (b) a `phase:*` label tracking lifecycle position (FR-003),
+  and (c) one or more `agent:*` labels identifying which AI agents
+  have reconciled it (FR-036, sticky).
 - **Task Phase**: A grouping of tasks (Phase 1, Phase 2, …) declared
   in `tasks.md` or `plan.md` via canonical spec-kit
   `## Phase N: <Name>` headers. Mirrors to one Linear **sub-issue**
-  under the spec Issue. Carries its own workflow state.
+  under the spec Issue. Carries its own workflow state, a
+  `task-phase:N` label, and the same sticky `agent:*` labels
+  applied to the parent spec Issue (FR-036).
 - **Task**: An entry in `tasks.md`. Identified by its task code
   (e.g. `T003-013`) and optionally a Fibonacci `[N]` story-point
   estimate marker (per FR-035) carried in the leading bracketed
