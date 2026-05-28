@@ -51,6 +51,54 @@ Full task-by-task breakdown: [`specs/001-spec-kit-linear-bridge/tasks.md`](./spe
 
 Spec-kit's artifacts map to Linear primitives like this (locked in spec.md §Overview):
 
+```mermaid
+graph LR
+    subgraph FS["Your filesystem"]
+        Repo["📁 Consumer repo"]
+        SpecDir["📂 specs/NNN-feature/"]
+        SpecMd["📝 spec.md"]
+        PlanMd["📐 plan.md"]
+        TasksMd["✅ tasks.md"]
+        PhaseN["## Phase N: blocks"]
+        Clarify["## Clarifications<br/>(session blocks)"]
+        Phase["🔄 Lifecycle phase<br/>(computed from files)"]
+
+        Repo --> SpecDir
+        SpecDir --> SpecMd
+        SpecDir --> PlanMd
+        SpecDir --> TasksMd
+        TasksMd --> PhaseN
+        SpecMd --> Clarify
+        SpecDir --> Phase
+    end
+
+    subgraph LN["Linear workspace"]
+        Team["👥 Team"]
+        subgraph Proj["📦 Project (one per repo)"]
+            Issue["📋 Spec Issue<br/>workflow state + labels"]
+            SubIssue["🧩 Sub-issue<br/>(one per task phase)"]
+            Checklist["☑ Checklist items<br/>(read-only mirror)"]
+            Comments["💬 Comments<br/>(on spec Issue)"]
+            Labels["🏷 speckit-spec:NNN<br/>phase:*<br/>task-phase:N"]
+        end
+        Team --> Proj
+        Issue --> SubIssue
+        SubIssue --> Checklist
+        Issue --> Comments
+        Issue -.- Labels
+        SubIssue -.- Labels
+    end
+
+    Repo -- "becomes" --> Proj
+    SpecDir -- "becomes" --> Issue
+    SpecMd -- "title + memory block" --> Issue
+    PlanMd -- "posts as" --> Comments
+    PhaseN -- "becomes" --> SubIssue
+    TasksMd -- "mirrors to" --> Checklist
+    Clarify -- "posts as" --> Comments
+    Phase -- "drives state + label" --> Issue
+```
+
 | Filesystem concept | Linear primitive |
 |---|---|
 | Consumer repository | **Project** |
@@ -74,6 +122,7 @@ You keep writing specs the way you always have. Linear keeps up on its own.
 graph LR
     subgraph Local["Your work, on disk"]
         Specs["📝 Your specs<br/>(the markdown you write)"]
+        PR["🔀 GitHub PR events<br/>(opened · ready · merged)"]
     end
 
     subgraph Mirror["Where it shows up"]
@@ -81,7 +130,7 @@ graph LR
     end
 
     Specs -- "every spec-kit command" --> Linear
-    Specs -. "a PR merges on GitHub" .-> Linear
+    PR -. "a PR lands on GitHub" .-> Linear
 ```
 
 - **The everyday case.** You run `/speckit-plan` (or specify, clarify, tasks, implement, analyze) and Linear catches up in the same breath. No extra step, no separate sync command, no remembering.
