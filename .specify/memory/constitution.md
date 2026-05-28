@@ -3,7 +3,7 @@ SYNC IMPACT REPORT
 ==================
 Version change: (uninitialised template) → 1.0.0
 Rationale: Initial ratification — first concrete constitution for the
-speckit-linear project, derived from BRIEF.md, spec 001, and the
+spec-kit-linear project, derived from BRIEF.md, spec 001, and the
 linear-mcp-capability-check validation.
 
 Principles defined (initial ratification, no prior names to rename):
@@ -39,7 +39,7 @@ Templates requiring updates:
 Follow-up TODOs: none deferred.
 -->
 
-# speckit-linear Constitution
+# spec-kit-linear Constitution
 
 The non-negotiable principles that govern how the spec-kit ↔ Linear
 bridge is built, installed, and operated. Every functional requirement
@@ -300,7 +300,7 @@ post-incident audit.
 ## Governance
 
 This constitution supersedes all other practices and informal
-conventions in the `speckit-linear` project. Where this constitution
+conventions in the `spec-kit-linear` project. Where this constitution
 and any other document (BRIEF.md, validation notes, README) conflict,
 this constitution wins.
 

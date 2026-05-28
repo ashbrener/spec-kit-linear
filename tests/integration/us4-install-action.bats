@@ -10,7 +10,7 @@
 #         not yet installed,
 #   WHEN  `src/install.sh --with-action ...` runs,
 #   THEN  the install step drops the GitHub Action workflow into
-#         `.github/workflows/speckit-linear-sync.yml` carrying the
+#         `.github/workflows/spec-kit-linear-sync.yml` carrying the
 #         three required triggers (pull_request: opened,
 #         ready_for_review, closed), AND
 #         the install report (stdout/stderr) includes the
@@ -76,7 +76,7 @@ setup() {
     [ "$status" -eq 0 ]
 
     # ---- workflow file exists at the canonical path ----
-    local workflow="${SANDBOX_REPO}/.github/workflows/speckit-linear-sync.yml"
+    local workflow="${SANDBOX_REPO}/.github/workflows/spec-kit-linear-sync.yml"
     [ -f "$workflow" ]
 
     # ---- workflow file carries the three required pull_request
@@ -99,7 +99,7 @@ setup() {
     # token-provisioning steps to the operator (link to Linear's
     # API key page, gh secret set LINEAR_API_TOKEN example)."
     # The contract sample (command-shapes.md §5.5) shows:
-    #   → Run: gh secret set LINEAR_API_TOKEN -R ashbrener/speckit-linear
+    #   → Run: gh secret set LINEAR_API_TOKEN -R ashbrener/spec-kit-linear
     [[ "$output" == *"gh secret set LINEAR_API_TOKEN"* ]]
 
     # ---- the report also mentions where the operator gets the token ----

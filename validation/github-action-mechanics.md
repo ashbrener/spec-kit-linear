@@ -1,4 +1,4 @@
-# GitHub Action mechanics for `speckit-linear-sync.yml`
+# GitHub Action mechanics for `spec-kit-linear-sync.yml`
 
 Reference for FR-027..FR-030 so `/speckit-plan` has concrete inputs.
 
@@ -9,13 +9,13 @@ after reading one YAML file — a composite/Docker action adds separate-
 repo maintenance for zero gain. `curl`, `jq`, `yq` are preinstalled.
 
 ```yaml
-# .github/workflows/speckit-linear-sync.yml
+# .github/workflows/spec-kit-linear-sync.yml
 # Layer E of the spec-kit <-> Linear bridge (FR-027..FR-030).
 # Flips spec Issue workflow state on PR open / ready / closed-merged.
 # Idempotent with Layer D (reconciliation): failures here are recovered
 # on the next sync.
 
-name: speckit-linear-sync
+name: spec-kit-linear-sync
 
 on:
   pull_request:
@@ -146,7 +146,7 @@ discriminates merged closes from drop-closes
 **Secret provisioning (verbatim in install output):**
 
 1. Linear → Settings → API → **Create new personal API key**
-   (suggested name: `speckit-linear-sync`).
+   (suggested name: `spec-kit-linear-sync`).
 2. Copy token (`lin_api_…`).
 3. `gh secret set LINEAR_API_TOKEN -R <owner>/<repo>` and paste.
 
@@ -195,7 +195,7 @@ checks in the PR UI.
    Smoke-test against a live workspace before plan freezes.
 4. **Concurrency group.** Rapid `opened → ready_for_review` can race.
    Reference YAML omits `concurrency:` for simplicity; plan should
-   decide whether to add `concurrency: { group: speckit-linear-${{ github.event.pull_request.number }}, cancel-in-progress: false }`.
+   decide whether to add `concurrency: { group: spec-kit-linear-${{ github.event.pull_request.number }}, cancel-in-progress: false }`.
 5. **`config.yml` schema.** Reference YAML reads `.project_id` and
    `.team_id` as top-level scalars. Lock the schema before extension-add
    is implemented.

@@ -77,16 +77,16 @@ readonly CURL_BIN="${GRAPHQL_CURL_BIN:-curl}"
 
 # graphql::_log_error <message...>
 #
-# Emit a structured single-line error to stderr. The "speckit-linear: graphql"
+# Emit a structured single-line error to stderr. The "spec-kit-linear: graphql"
 # prefix lets log aggregators filter cleanly and matches the marker convention
 # used by save_comment bodies (contracts/linear-graphql-mutations.md §4.5).
 graphql::_log_error() {
-    printf 'speckit-linear: graphql ERROR %s\n' "$*" >&2
+    printf 'spec-kit-linear: graphql ERROR %s\n' "$*" >&2
 }
 
 # graphql::_log_warn <message...>
 graphql::_log_warn() {
-    printf 'speckit-linear: graphql WARN  %s\n' "$*" >&2
+    printf 'spec-kit-linear: graphql WARN  %s\n' "$*" >&2
 }
 
 # graphql::_load_api_key
@@ -233,7 +233,7 @@ graphql::_request() {
     graphql::_load_api_key
 
     local header_file response_raw body status_code attempt max_attempts
-    header_file="$(mktemp -t speckit-linear-graphql.XXXXXX)"
+    header_file="$(mktemp -t spec-kit-linear-graphql.XXXXXX)"
     # Always clean up the header tempfile, even on error/exit.
     # shellcheck disable=SC2064
     # Expand $header_file now (at trap-install time) — we want THIS file,

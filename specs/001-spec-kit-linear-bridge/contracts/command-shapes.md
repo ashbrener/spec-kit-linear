@@ -8,7 +8,7 @@ contract every implementer + reviewer relies on.
 **Three invocation paths exist** for every command (per plan.md §1):
 
 1. **AI-agent invocation** — operator runs the slash-command
-   form (`/speckit-linear-push`) in their coding agent. The agent
+   form (`/spec-kit-linear-push`) in their coding agent. The agent
    reads `commands/linear-<sub>.md` and executes the algorithm,
    shelling out to `src/*.sh` for deterministic work.
 2. **Spec-kit `after_*` hook chain** — only `speckit.linear.push`
@@ -32,7 +32,7 @@ Exit codes (per FR-022) are consistent across all five commands:
 ## 1. `speckit.linear.push`
 
 **Three-dot name**: `speckit.linear.push`
-**Slash form**: `/speckit-linear-push`
+**Slash form**: `/spec-kit-linear-push`
 **Implementation**: `src/reconcile.sh`
 **FRs implemented**: FR-001, FR-002, FR-003, FR-004, FR-004b,
 FR-005, FR-006, FR-007, FR-008, FR-010, FR-013, FR-014, FR-015,
@@ -47,7 +47,7 @@ into convergence. The ONLY path that mutates Linear from Layer D.
 
 ### 1.2 Invocation contexts
 
-- **AI agent** via `/speckit-linear-push`.
+- **AI agent** via `/spec-kit-linear-push`.
 - **All six `after_*` hooks** (FR-031) fire this command
   automatically.
 - **All three local git hooks** (`post-checkout`, `post-commit`,
@@ -95,7 +95,7 @@ Positional args: none.
     back to git-only branch reachability when `gh` absent)
 - **Linear state** (queried before mutation):
   - `issues(filter: { labels: { name: "speckit-spec:NNN" }, project: { id } })` — identity lookup per FR-004b
-  - `comments(filter: { issue: { id }, body: { startsWith: "<!-- speckit-linear:" } })` — comment dedup per FR-008
+  - `comments(filter: { issue: { id }, body: { startsWith: "<!-- spec-kit-linear:" } })` — comment dedup per FR-008
   - `get_issue(id) { blocks { id } }` — blocking-relation diff per FR-007
 
 ### 1.5 Outputs produced
@@ -109,7 +109,7 @@ Positional args: none.
   `sync.emit_summary: false`. Format:
 
 ```text
-speckit-linear push summary
+spec-kit-linear push summary
   Specs processed:    3
   Issues created:     1
   Issues updated:     2
@@ -141,8 +141,8 @@ speckit-linear push summary
 
 | Failure | Behaviour | Operator response |
 |---|---|---|
-| `linear-config.yml` missing | Exit 2 with "Run `/speckit-linear-install` first" | Run install ceremony |
-| `linear.workflow_state_uuids.*` unfilled (all zeroes) | Exit 2 with "Run `/speckit-linear-seed` first" per FR-022 | Run seed |
+| `linear-config.yml` missing | Exit 2 with "Run `/spec-kit-linear-install` first" | Run install ceremony |
+| `linear.workflow_state_uuids.*` unfilled (all zeroes) | Exit 2 with "Run `/spec-kit-linear-seed` first" per FR-022 | Run seed |
 | Bash 3.2 detected (macOS shipped) | Exit 2 with `brew install bash` remediation | Install bash 4+ |
 | OAuth session expired (4xx from MCP) | Per-spec warning + skip; continue with next spec | Re-auth via MCP host |
 | `LINEAR_API_KEY` missing in git-hook context | Exit 1 with "set in `.env` or via shell" | Populate `.env` |
@@ -158,7 +158,7 @@ speckit-linear push summary
 ## 2. `speckit.linear.pull`
 
 **Three-dot name**: `speckit.linear.pull`
-**Slash form**: `/speckit-linear-pull`
+**Slash form**: `/spec-kit-linear-pull`
 **Implementation**: `src/reconcile.sh --read-only` (thin wrapper)
 **FRs implemented**: FR-026, FR-024.
 
@@ -172,7 +172,7 @@ needs visibility.
 
 ### 2.2 Invocation contexts
 
-- **AI agent** via `/speckit-linear-pull` — the most common path.
+- **AI agent** via `/spec-kit-linear-pull` — the most common path.
 - **On-demand**: `bash src/reconcile.sh --read-only [flags]`.
 - **NOT wired to any hook** (would be redundant with push).
 
@@ -206,7 +206,7 @@ spec 001-spec-kit-linear-bridge
   Linear Issue:    OSH-42 (https://linear.app/osh-infra/issue/OSH-42)
   Workflow state:  Implementing
   Phase label:     phase:implementing
-  Memory block:    branch=001-spec-kit-linear-bridge worktree=/Users/ash/Code/AI/speckit-linear last_touched=2026-05-28T12:30Z
+  Memory block:    branch=001-spec-kit-linear-bridge worktree=/Users/ash/Code/AI/spec-kit-linear last_touched=2026-05-28T12:30Z
   Task phases:
     Phase 1 — Foundation       Done   ████████████ 12/12
     Phase 2 — Reconciler core  In Progress  ██████░░░░░░  6/12
@@ -235,7 +235,7 @@ spec 001-spec-kit-linear-bridge
 ## 3. `speckit.linear.status`
 
 **Three-dot name**: `speckit.linear.status`
-**Slash form**: `/speckit-linear-status`
+**Slash form**: `/spec-kit-linear-status`
 **Implementation**: `src/reconcile.sh --status` (dry-run + drift
 detection wrapper)
 **FRs implemented**: FR-023, FR-024, FR-025 (read-only).
@@ -250,7 +250,7 @@ in sync?" without running a full reconcile.
 
 ### 3.2 Invocation contexts
 
-- **AI agent** via `/speckit-linear-status`.
+- **AI agent** via `/spec-kit-linear-status`.
 - **On-demand**: `bash src/reconcile.sh --status [flags]`.
 - **NOT hook-wired.**
 
@@ -277,7 +277,7 @@ Same flag semantics as `pull` (§2.3).
 spec 001-spec-kit-linear-bridge
   Filesystem phase: implementing
   Linear phase:     implementing                 ✓ in sync
-  Worktree authority: WRITE (branch '001-spec-kit-linear-bridge' checked out at /Users/ash/Code/AI/speckit-linear)
+  Worktree authority: WRITE (branch '001-spec-kit-linear-bridge' checked out at /Users/ash/Code/AI/spec-kit-linear)
   Drift detected:
     - task-phase 'Phase 3 — Webhook layer': filesystem has 8 tasks (1 done), Linear has 7 (1 done)
       → reconcile will ADD checklist line for T001-024
@@ -307,7 +307,7 @@ situation per FR-014/User Story 5 and recommends running
 ## 4. `speckit.linear.seed`
 
 **Three-dot name**: `speckit.linear.seed`
-**Slash form**: `/speckit-linear-seed`
+**Slash form**: `/spec-kit-linear-seed`
 **Implementation**: `src/seed.sh`
 **FRs implemented**: FR-021, FR-022, FR-032.
 
@@ -321,7 +321,7 @@ re-runs are no-ops for already-existing states/labels.
 
 ### 4.2 Invocation contexts
 
-- **AI agent** via `/speckit-linear-seed` — required step before
+- **AI agent** via `/spec-kit-linear-seed` — required step before
   first `push` per FR-022.
 - **On-demand**: `bash src/seed.sh [flags]`.
 - **NOT hook-wired** (one-shot per workspace).
@@ -359,7 +359,7 @@ bash src/seed.sh [--team <UUID>] [--dry-run] [--force]
 - **Structured summary to stderr**:
 
 ```text
-speckit-linear seed summary
+spec-kit-linear seed summary
   Workflow states created:  9
   Workflow states existing: 0 (would skip; none found in team)
   Issue labels created:     8 (phase:specifying ... phase:ready_to_merge)
@@ -380,7 +380,7 @@ speckit-linear seed summary
 
 | Failure | Behaviour | Operator response |
 |---|---|---|
-| `linear.team.id` not yet populated | Exit 2 with "Run `/speckit-linear-install` first" | Install |
+| `linear.team.id` not yet populated | Exit 2 with "Run `/spec-kit-linear-install` first" | Install |
 | Insufficient OAuth scope (no `write`) | Per-state error + abort before `linear-config.yml` mutation | Re-auth with full scopes (see install) |
 | Multiple existing states match a target name | Warn and require operator to pick — never auto-resolve | Manually pass UUID via config |
 | Linear 5xx mid-seed (some states created, some not) | Captures whatever UUIDs were created into config; surfaces remaining unseeded list; safe re-run completes | Re-run seed |
@@ -391,7 +391,7 @@ speckit-linear seed summary
 ## 5. `speckit.linear.install`
 
 **Three-dot name**: `speckit.linear.install`
-**Slash form**: `/speckit-linear-install`
+**Slash form**: `/spec-kit-linear-install`
 **Implementation**: `src/install.sh`
 **FRs implemented**: FR-002, FR-018, FR-018b, FR-019, FR-020,
 FR-027, FR-029, FR-031, FR-033.
@@ -407,7 +407,7 @@ ready for `seed` + `push`" command.
 
 ### 5.2 Invocation contexts
 
-- **AI agent** via `/speckit-linear-install` (typical path).
+- **AI agent** via `/spec-kit-linear-install` (typical path).
 - **On-demand**: `bash src/install.sh [flags]`.
 - **NOT hook-wired** (one-shot per repo).
 
@@ -423,7 +423,7 @@ bash src/install.sh [--project <UUID>|--auto-create] [--team <UUID>]
 | `--project <UUID>` | interactive prompt | Attach to existing Linear Project (FR-002 non-interactive path) |
 | `--auto-create` | mutually exclusive with `--project` | Create a new Project named after the repo basename (FR-002 non-interactive path) |
 | `--team <UUID>` | auto-detect (sole team) or interactive prompt | Override team selection (FR-002) |
-| `--no-action` | false | Skip the `.github/workflows/speckit-linear-sync.yml` install step (operator may not have repo admin) |
+| `--no-action` | false | Skip the `.github/workflows/spec-kit-linear-sync.yml` install step (operator may not have repo admin) |
 | `--no-git-hooks` | false | Skip the local git-hook install step (FR-033) |
 | `--no-prompt` | false | Fully non-interactive; requires `--project`/`--auto-create` and `--team` to be passed |
 
@@ -462,7 +462,7 @@ bash src/install.sh [--project <UUID>|--auto-create] [--team <UUID>]
     `seed`.)
   - `.specify/extensions.yml` — six `after_*` hook entries added
     per FR-031 (deduplicated on re-install).
-  - `.github/workflows/speckit-linear-sync.yml` — dropped from
+  - `.github/workflows/spec-kit-linear-sync.yml` — dropped from
     `templates/github-action.yml` unless `--no-action`.
   - `.git/hooks/post-checkout`, `post-commit`, `post-merge` —
     dropped from `templates/git-hooks/` unless `--no-git-hooks`.
@@ -475,7 +475,7 @@ bash src/install.sh [--project <UUID>|--auto-create] [--team <UUID>]
 - **Structured dependency report to stderr** (FR-018b — load-bearing):
 
 ```text
-speckit-linear install dependency report
+spec-kit-linear install dependency report
 
 Runtime dependencies (FR-018b):
   ✓ bash 5.2.21
@@ -490,21 +490,21 @@ Linear MCP wiring:
 
 Filesystem dependencies:
   ✓ .git/hooks/ writable (3 hooks installed: post-checkout, post-commit, post-merge)
-  ✓ .github/workflows/ writable (speckit-linear-sync.yml installed)
+  ✓ .github/workflows/ writable (spec-kit-linear-sync.yml installed)
   ✓ .specify/extensions.yml writable (6 after_* hooks registered)
 
 Linear binding:
   ✓ Team:    OSH-INFRA (00000000-0000-0000-0000-000000000abc) [single-team workspace, auto-selected]
-  ✓ Project: speckit-linear (00000000-0000-0000-0000-000000000def) [created new]
+  ✓ Project: spec-kit-linear (00000000-0000-0000-0000-000000000def) [created new]
   ✗ Workflow state UUIDs: NOT YET SEEDED
-    → Next step: run /speckit-linear-seed
+    → Next step: run /spec-kit-linear-seed
 
 Webhook secret (FR-029):
   ⚠ GitHub repo secret LINEAR_API_TOKEN: NOT SET
-    → Run:    gh secret set LINEAR_API_TOKEN -R ashbrener/speckit-linear
-    → Source: https://linear.app/settings/api (create personal API key 'speckit-linear-sync')
+    → Run:    gh secret set LINEAR_API_TOKEN -R ashbrener/spec-kit-linear
+    → Source: https://linear.app/settings/api (create personal API key 'spec-kit-linear-sync')
 
-Install complete. Run /speckit-linear-seed next.
+Install complete. Run /spec-kit-linear-seed next.
 ```
 
 `✓` = verified. `⚠` = warning (operator action required but
@@ -529,7 +529,7 @@ with exit code 2).
 | `.mcp.json` write fails (permission) | Exit 2 with chmod hint | Fix perms |
 | OAuth scopes incomplete | `⚠` in report listing missing scopes; install completes but `seed` may fail | Re-auth with full scope set |
 | `.git/hooks/post-commit` pre-exists (non-bridge content) | Warn; install chains the bridge hook AFTER existing content per FR-033 | Review chained hook; operator may consolidate |
-| `.github/workflows/speckit-linear-sync.yml` pre-exists | Warn; install refuses to overwrite (operator may have customised it); install completes with the file untouched | Manually merge changes |
+| `.github/workflows/spec-kit-linear-sync.yml` pre-exists | Warn; install refuses to overwrite (operator may have customised it); install completes with the file untouched | Manually merge changes |
 | `--no-prompt` without `--project`/`--auto-create` | Exit 2 with usage error | Pass required flags |
 | Multiple teams found, no `--team`, `--no-prompt` set | Exit 2 listing all teams + their UUIDs | Pass `--team <UUID>` |
 | `linear-config.yml` already exists with mismatched Project UUID | Warn loudly; never overwrite without `--force`; report drift in dependency report | Operator decides — keep existing or `--force` overwrite |

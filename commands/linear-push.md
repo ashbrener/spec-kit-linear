@@ -27,7 +27,7 @@ state, SC-002).
 checked out in this worktree (Principle IV / FR-025); other specs
 enter read-only display mode (FR-026).
 **Layer**: this command implements Layer D. The GitHub Action template
-that ships with `/speckit-linear-install` implements Layer E and is
+that ships with `/spec-kit-linear-install` implements Layer E and is
 out of scope here.
 
 The deterministic work happens in `src/reconcile.sh`; this command is
@@ -61,7 +61,7 @@ implied. `dry-run` is orthogonal to `retroactive` and `spec`.
      (Intel) is earlier on `PATH` than `/bin/bash`.
    - The consumer repo's config is present at
      `.specify/extensions/linear/linear-config.yml`. If absent,
-     surface "run `/speckit-linear-install` first" and exit; do NOT
+     surface "run `/spec-kit-linear-install` first" and exit; do NOT
      attempt to run the reconciler.
    - `jq` is installed (`command -v jq`). `curl` is installed
      (`command -v curl`). `git` is installed and the working directory
@@ -106,8 +106,8 @@ implied. `dry-run` is orthogonal to `retroactive` and `spec`.
        directly to the inferred end-state (FR-014).
      - Renders the structured "memory" block (FR-004) and splices
        it into the spec Issue's description between the
-       `<!-- speckit-linear:memory:begin -->` /
-       `<!-- speckit-linear:memory:end -->` fences. Operator-added
+       `<!-- spec-kit-linear:memory:begin -->` /
+       `<!-- spec-kit-linear:memory:end -->` fences. Operator-added
        prose around the fences is preserved.
      - Reconciles task-phase sub-issues per `## Phase N: <Name>`
        header in `tasks.md` (FR-005). Each sub-issue carries a
@@ -151,8 +151,8 @@ implied. `dry-run` is orthogonal to `retroactive` and `spec`.
      warnings list.
    - `2` — workspace config error (per FR-022). The script halted
      before any mutation. Surface the exact remediation the script
-     printed (typically: run `/speckit-linear-install` or
-     `/speckit-linear-seed`). Do NOT retry automatically.
+     printed (typically: run `/spec-kit-linear-install` or
+     `/spec-kit-linear-seed`). Do NOT retry automatically.
    - `3` — transport failure. Linear was unreachable; nothing was
      written. Recommend re-running once network connectivity is
      restored.
@@ -162,7 +162,7 @@ implied. `dry-run` is orthogonal to `retroactive` and `spec`.
 - **Operator-driven.** `/speckit.linear.push` from the AI agent
   chat — the primary on-demand path for recovery from missed hooks
   and ad-hoc reconcile.
-- **Auto-fired hooks** (post-install via `/speckit-linear-install`).
+- **Auto-fired hooks** (post-install via `/spec-kit-linear-install`).
   Every `/speckit-*` lifecycle command in `.specify/extensions.yml`
   is wired to invoke this command per FR-031.
 - **Local git hooks** (`post-checkout`, `post-commit`, `post-merge`)
@@ -207,7 +207,7 @@ logs:
   `main` or an unrelated branch; the operator switches worktrees to
   re-enable write authority. Suppressed by `retroactive=true`.
 - `linear-config.yml not found at <path>; run
-  /speckit-linear-install` — FR-022 halt. Exit code 2.
+  /spec-kit-linear-install` — FR-022 halt. Exit code 2.
 
 ## Related commands
 

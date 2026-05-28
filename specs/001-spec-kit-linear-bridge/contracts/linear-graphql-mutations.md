@@ -194,7 +194,7 @@ divergence; never re-creates.
 save_project(
   name:        string,        # required for create — defaults to repo basename
   addTeams:    string[],      # required for create — Team UUID or name; bridge passes [teamId]
-  description: string?,       # markdown; bridge seeds with repo URL + "Managed by speckit-linear"
+  description: string?,       # markdown; bridge seeds with repo URL + "Managed by spec-kit-linear"
   summary:     string?,       # <=255 chars; bridge writes a 1-line repo summary
   state:       string?,       # "Planned" at create; updated at reconcile-time (§4.2)
   icon:        string?,
@@ -509,7 +509,7 @@ filesystem artifact. Stable identity is the body's first line — a
 deterministic marker the bridge emits:
 
 ```text
-<!-- speckit-linear: clarify-session 2026-05-27 -->
+<!-- spec-kit-linear: clarify-session 2026-05-27 -->
 **Clarification session 2026-05-27**
 
 - Q: …  
@@ -517,21 +517,21 @@ deterministic marker the bridge emits:
 ```
 
 ```text
-<!-- speckit-linear: red-team-finding red-team-001 -->
+<!-- spec-kit-linear: red-team-finding red-team-001 -->
 **Red-team finding RT-001 — <title>**
 
 …
 ```
 
 ```text
-<!-- speckit-linear: plan-summary plan.md#L42-L78 -->
+<!-- spec-kit-linear: plan-summary plan.md#L42-L78 -->
 **Plan section: Constitution Check**
 
 …
 ```
 
 Before posting, the bridge queries
-`comments(filter: { issue: { id: { eq: $specId } }, body: { startsWith: "<!-- speckit-linear: <kind> <id> -->" } })`.
+`comments(filter: { issue: { id: { eq: $specId } }, body: { startsWith: "<!-- spec-kit-linear: <kind> <id> -->" } })`.
 If found, compare bodies; if equal, skip. If diverged, call
 `save_comment(id: <existing>, body: <fresh>)` — yes, Linear
 comments are mutable via `save_comment(id, body)` per probe §3.

@@ -1,4 +1,4 @@
-# speckit-linear — per-consumer-repo configuration template
+# spec-kit-linear — per-consumer-repo configuration template
 #
 # Role: declares everything the bridge needs to talk to one Linear
 # workspace+team+project from one consumer repo. Lives at
@@ -35,7 +35,7 @@ linear:
     name: "OSH-INFRA"             # informational
   project:
     id: "00000000-0000-0000-0000-000000000000"   # Required (FR-002) — UUID is authoritative
-    name: "speckit-linear"        # informational (display only)
+    name: "spec-kit-linear"        # informational (display only)
   # Workflow state UUIDs captured by the seed step (FR-021 + FR-032).
   # Keys are the canonical lifecycle-phase identifiers. Lookup is by
   # UUID, never by name — Linear UI renames are safe; deletion surfaces
@@ -77,7 +77,7 @@ sync:
 # Webhook (Layer E) — populated by `speckit.linear.install` if opted in (FR-027).
 webhook:
   installed: false                                       # flip true when YAML is committed
-  workflow_path: ".github/workflows/speckit-linear-sync.yml"   # (FR-027)
+  workflow_path: ".github/workflows/spec-kit-linear-sync.yml"   # (FR-027)
   secret_name: "LINEAR_API_TOKEN"                        # GitHub repo secret name (FR-029)
 
 # Local git hooks — populated by `speckit.linear.install` (FR-033).
@@ -94,9 +94,9 @@ git_hooks:
 # How to bootstrap (first install, fresh consumer repo):
 #   1. `specify extension add linear`                 # copies this template
 #   2. `cp config-template.yml linear-config.yml`     # rename for the bridge to find it
-#   3. `/speckit-linear-install`                      # fills linear.{team,project}.id,
+#   3. `/spec-kit-linear-install`                      # fills linear.{team,project}.id,
 #                                                     # installs webhook + git hooks,
 #                                                     # registers after_* hooks
-#   4. `/speckit-linear-seed`                         # creates workflow states + labels,
+#   4. `/spec-kit-linear-seed`                         # creates workflow states + labels,
 #                                                     # fills workflow_state_uuids
 #   5. Commit `linear-config.yml`. Sync is now live (FR-002, Principle V).

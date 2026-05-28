@@ -227,7 +227,7 @@ EOF
 #   short enough that --quiet is not worth a flag).
 # -----------------------------------------------------------------------------
 seed::log() {
-    printf 'speckit-linear: seed %s\n' "$*" >&2
+    printf 'spec-kit-linear: seed %s\n' "$*" >&2
 }
 
 # -----------------------------------------------------------------------------
@@ -259,7 +259,7 @@ seed::parse_args() {
         case "$1" in
             --team)
                 if (( $# < 2 )); then
-                    printf 'speckit-linear: --team requires a UUID argument\n' >&2
+                    printf 'spec-kit-linear: --team requires a UUID argument\n' >&2
                     seed::usage
                     exit 2
                 fi
@@ -280,7 +280,7 @@ seed::parse_args() {
                 ;;
             --config)
                 if (( $# < 2 )); then
-                    printf 'speckit-linear: --config requires a path argument\n' >&2
+                    printf 'spec-kit-linear: --config requires a path argument\n' >&2
                     seed::usage
                     exit 2
                 fi
@@ -296,7 +296,7 @@ seed::parse_args() {
                 exit 0
                 ;;
             *)
-                printf 'speckit-linear: unknown argument: %s\n' "$1" >&2
+                printf 'spec-kit-linear: unknown argument: %s\n' "$1" >&2
                 seed::usage
                 exit 2
                 ;;
@@ -711,7 +711,7 @@ seed::find_template() {
 # seed::ensure_config
 #   Make sure linear-config.yml exists at SEED_CONFIG_PATH. If absent, copy
 #   from the template and surface a warning so the operator knows they need
-#   to run /speckit-linear-install next to fill in team + project UUIDs.
+#   to run /spec-kit-linear-install next to fill in team + project UUIDs.
 seed::ensure_config() {
     if [[ -f "$SEED_CONFIG_PATH" ]]; then
         return 0
@@ -734,7 +734,7 @@ seed::ensure_config() {
 
     cp "$template" "$SEED_CONFIG_PATH"
     summary::add warned \
-        "${SEED_CONFIG_PATH} was missing; copied from ${template}. Run /speckit-linear-install to fill in linear.team.id and linear.project.id."
+        "${SEED_CONFIG_PATH} was missing; copied from ${template}. Run /spec-kit-linear-install to fill in linear.team.id and linear.project.id."
 }
 
 # seed::render_workflow_uuid_block <indent>
@@ -809,7 +809,7 @@ seed::write_config_uuids() {
     default_block="$(seed::render_default_state_uuid_block "  ")"
 
     local tmp_out
-    tmp_out="$(mktemp -t speckit-linear-seed.XXXXXX)"
+    tmp_out="$(mktemp -t spec-kit-linear-seed.XXXXXX)"
     # shellcheck disable=SC2064
     trap "rm -f '${tmp_out}'" RETURN
 

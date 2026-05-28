@@ -7,13 +7,13 @@
 | Field | Value |
 |---|---|
 | Run ID | `26542296703` |
-| URL | <https://github.com/ashbrener/speckit-linear/actions/runs/26542296703> |
+| URL | <https://github.com/ashbrener/spec-kit-linear/actions/runs/26542296703> |
 | Branch | `001-spec-kit-linear-bridge` |
 | Event | `pull_request` |
 | Conclusion | `failure` |
 | Failing job | `markdownlint` (job id `78186355908`) |
 | Failing step | `Run markdownlint-cli2` (step 4) |
-| Job URL | <https://github.com/ashbrener/speckit-linear/actions/runs/26542296703/job/78186355908> |
+| Job URL | <https://github.com/ashbrener/spec-kit-linear/actions/runs/26542296703/job/78186355908> |
 
 All other jobs in the same run (`yamllint`, `shellcheck`, `bats (bash 5.2)`, `bats (bash 4.4)`) passed.
 
@@ -37,7 +37,7 @@ npx --yes markdownlint-cli2 \
 ```
 markdownlint-cli2 v0.22.1 (markdownlint v0.40.0)
 Error: Unable to use configuration file
-  '/home/runner/work/speckit-linear/speckit-linear/{"default": true, "MD013": false, "MD033": false, "MD041": false}';
+  '/home/runner/work/spec-kit-linear/spec-kit-linear/{"default": true, "MD013": false, "MD033": false, "MD041": false}';
   Configuration file should be one of the supported names
   (e.g., '.markdownlint-cli2.jsonc') or a prefix with a supported name
   (e.g., 'example.markdownlint-cli2.jsonc') or have a supported extension

@@ -288,7 +288,7 @@ intermediate phase transitions appearing in Linear's activity log.
   states that the bridge expects. (Reconcile should halt with a
   clear pointer to the seed step.)
 - The same feature number is reused across consumer repos (e.g.
-  `speckit-linear/specs/001-…` and `wingman/specs/001-…`).
+  `spec-kit-linear/specs/001-…` and `wingman/specs/001-…`).
   (Reconcile should disambiguate by the owning Linear Project — i.e.
   by consumer repo identity — and never cross-pollinate.)
 - The operator ticks a checklist item in Linear's UI. (The next
@@ -476,7 +476,7 @@ intermediate phase transitions appearing in Linear's activity log.
   spec-kit's `specify extension add` mechanism, with no additional
   global package install required on the operator's machine beyond
   spec-kit itself. Installation MUST also offer to drop a GitHub
-  Action workflow at `.github/workflows/speckit-linear-sync.yml` in
+  Action workflow at `.github/workflows/spec-kit-linear-sync.yml` in
   the consumer repo (per FR-027) and guide the operator through
   provisioning a Linear API token as a GitHub repository secret named
   `LINEAR_API_TOKEN` if the operator accepts.
@@ -526,7 +526,7 @@ intermediate phase transitions appearing in Linear's activity log.
 #### External GitHub integration (webhook layer)
 
 - **FR-027**: The bridge MUST ship a GitHub Action workflow that
-  consumer repos install to `.github/workflows/speckit-linear-sync.yml`
+  consumer repos install to `.github/workflows/spec-kit-linear-sync.yml`
   at `specify extension add linear` time. Installation is opt-in
   (the operator may decline and rely solely on the reconciliation
   layer). The workflow MUST be authored to handle three GitHub

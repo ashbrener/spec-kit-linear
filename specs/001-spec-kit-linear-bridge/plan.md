@@ -28,7 +28,7 @@ commands when an agent session is present) and **direct Linear
 GraphQL via `curl`** (used by git hooks and the GitHub Action which
 have no MCP session). The official MCP exposes **unified `save_*` tools** (`save_issue`, `save_project`, `save_comment`, `save_milestone`) per the runtime probe, with name-based arguments that the MCP server resolves to UUIDs server-side. Per Principle V the bridge still STORES UUIDs in `linear-config.yml`; the MCP-call boundary translates UUID → name (using the config's informational `*.name` fields, or a lookup query) before invoking `save_*`. Direct GraphQL paths (git hooks, GitHub Action, seed step) continue to operate on UUIDs natively. Both paths converge on the same reconciler
 logic. A GitHub Action template
-(`.github/workflows/speckit-linear-sync.yml`) ships as Layer E for
+(`.github/workflows/spec-kit-linear-sync.yml`) ships as Layer E for
 real-time PR-event sync; it talks to Linear via direct GraphQL with a
 repo-secret token.
 
@@ -71,14 +71,14 @@ FR-018b and surfaces a remediation hint (macOS users typically
   toggles). Committed.
 - `.env` (gitignored) — optional, holds `LINEAR_API_KEY` for the
   direct-GraphQL paths.
-- `.github/workflows/speckit-linear-sync.yml` — the Layer E webhook.
+- `.github/workflows/spec-kit-linear-sync.yml` — the Layer E webhook.
   Committed. Opt-in.
 - `.git/hooks/post-{checkout,commit,merge}` — local git hooks.
   Per-clone (`.git/` is not versioned).
 - `.specify/extensions.yml` — the consumer's spec-kit hook registry,
   updated by `speckit.linear.install`.
 
-No SQLite, no JSON sidecar databases, no `~/.config/speckit-linear/`.
+No SQLite, no JSON sidecar databases, no `~/.config/spec-kit-linear/`.
 
 **Testing**:
 
@@ -289,7 +289,7 @@ src/                          # bash implementation called by commands + hooks +
 └── summary.sh                # structured summary emitter (Principle VIII)
 
 templates/                    # files installed into consumer repos
-├── github-action.yml         # → .github/workflows/speckit-linear-sync.yml (Layer E)
+├── github-action.yml         # → .github/workflows/spec-kit-linear-sync.yml (Layer E)
 └── git-hooks/                # → .git/hooks/ (per-clone)
     ├── post-checkout
     ├── post-commit
@@ -323,7 +323,7 @@ validation/                   # research artefacts informing this plan
 
 .github/
 └── workflows/
-    └── ci.yml                # speckit-linear's OWN CI (shellcheck, bats, yamllint, markdownlint)
+    └── ci.yml                # spec-kit-linear's OWN CI (shellcheck, bats, yamllint, markdownlint)
 ```
 
 **Structure Decision**: Single-project layout (Option 1 from the

@@ -117,7 +117,7 @@ setup() {
     # ---- each session's date appears in at least one mutation body ----
     # FR-015: the body MUST contain the session's bullets. The
     # session-date marker (per the contract §4.5
-    # `<!-- speckit-linear: clarify-session YYYY-MM-DD -->`) is the
+    # `<!-- spec-kit-linear: clarify-session YYYY-MM-DD -->`) is the
     # most distinctive substring, but we also accept the bare date
     # token since implementations may format the marker differently.
     local session_2026_05_01

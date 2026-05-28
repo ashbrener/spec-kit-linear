@@ -431,7 +431,7 @@ filesystem (`specs/NNN-feature/`, `linear-config.yml`, gitignored
 `.env`), (2) Linear itself, (3) GitHub Action per-invocation env
 (secrets + checkout-time `config.yml` read). No hosted backend, no
 daemon, no database (SQLite or otherwise), no JSON sidecar, no
-`~/.config/speckit-linear/`.
+`~/.config/spec-kit-linear/`.
 
 **Rationale**: Constitutionally locked by Architectural Constraints
 ("State lives in three places only"). Direct mechanical consequence
@@ -449,7 +449,7 @@ create an inspection-opaque idempotency boundary.
   ceremony (FR-018b) cannot verify it.
 - *JSON sidecar (`.state.json`)* — Principle II Rule 2 forbids; the
   identity scheme (Decision 8) makes it unnecessary.
-- *Per-operator `~/.config/speckit-linear/`* — Principle V Rule 5
+- *Per-operator `~/.config/spec-kit-linear/`* — Principle V Rule 5
   forbids; OAuth state belongs to the MCP client, not the bridge.
 
 ---

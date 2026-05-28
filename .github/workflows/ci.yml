@@ -1,5 +1,5 @@
 # =============================================================================
-# CI for the speckit-linear repository itself.
+# CI for the spec-kit-linear repository itself.
 #
 # This workflow catches regressions in the bridge code that lives in THIS repo:
 #   * bash implementation under src/*.sh

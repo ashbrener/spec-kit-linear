@@ -1,4 +1,4 @@
-# speckit-linear
+# spec-kit-linear
 
 > A spec-kit extension that mirrors every spec on disk into Linear, so you can see — and steer — every active spec across every repo from a single Linear view.
 
@@ -16,7 +16,7 @@ The artifacts are right there in markdown. There's just no single pane where you
 
 ## The solution
 
-Linear becomes the consolidated memory layer. The filesystem stays the single source of truth — every spec, every clarify round, every task list is still a markdown file in `specs/NNN-feature/` — but `speckit-linear` reads that state and pushes it into Linear so each spec is a real Linear Issue with phase, branch, worktree, and current task visible at a glance.
+Linear becomes the consolidated memory layer. The filesystem stays the single source of truth — every spec, every clarify round, every task list is still a markdown file in `specs/NNN-feature/` — but `spec-kit-linear` reads that state and pushes it into Linear so each spec is a real Linear Issue with phase, branch, worktree, and current task visible at a glance.
 
 The bridge is **reconcile-based**: every `/speckit-*` command fires a hook that reads the spec directory and pushes whatever Linear needs to match. Linear is the mirror. The filesystem wins every conflict. Reverse sync (Linear → disk) is explicitly out of scope.
 
@@ -201,7 +201,7 @@ sequenceDiagram
 
     Note over Op,GH: Layer E — PR events drive real-time merge state
     Op->>GH: open PR · mark ready · merge
-    GH->>GH: speckit-linear-sync.yml fires
+    GH->>GH: spec-kit-linear-sync.yml fires
     GH->>LN: GraphQL · flip workflow state by UUID
     LN-->>GH: ok
 
@@ -223,7 +223,7 @@ If Layer E isn't installed, Layer D still converges to `Merged` on the next sync
 - **Phase 2** (Foundational — 5 bash modules + 102 unit tests + 5 fixtures) ✓
 - **Phase 3** (US1 — MVP reconciler + integration tests) ✓
 - **Phases 4–8** in progress (see [Coming next](#coming-next))
-- **CI**: green on `001-spec-kit-linear-bridge` ([latest run](https://github.com/ashbrener/speckit-linear/actions?query=branch%3A001-spec-kit-linear-bridge))
+- **CI**: green on `001-spec-kit-linear-bridge` ([latest run](https://github.com/ashbrener/spec-kit-linear/actions?query=branch%3A001-spec-kit-linear-bridge))
 
 This repo is in the spec-kit lifecycle for its own first release at `specs/001-spec-kit-linear-bridge/`. The full install ceremony, the CLI reference for the auto-firing path, and the seed workflow land in Phases 4–8.
 
@@ -239,7 +239,7 @@ Bootstrapping note: this repo dogfoods spec-kit but **cannot** dogfood itself on
 ## Repository layout
 
 ```
-speckit-linear/
+spec-kit-linear/
 ├── BRIEF.md                          # kickoff brief — design decisions
 ├── README.md                         # you are here
 ├── CHANGELOG.md

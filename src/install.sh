@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 # =============================================================================
-# src/install.sh — install ceremony for the speckit-linear bridge.
+# src/install.sh — install ceremony for the spec-kit-linear bridge.
 #
 # Implements `speckit.linear.install` per
 # `specs/001-spec-kit-linear-bridge/contracts/command-shapes.md` §5
@@ -69,7 +69,7 @@ readonly INSTALL_CONFIG_DIR=".specify/extensions/linear"
 readonly INSTALL_EXTENSIONS_YML=".specify/extensions.yml"
 readonly INSTALL_GIT_HOOKS_DIR=".git/hooks"
 readonly INSTALL_GH_WORKFLOWS_DIR=".github/workflows"
-readonly INSTALL_GH_WORKFLOW_FILE=".github/workflows/speckit-linear-sync.yml"
+readonly INSTALL_GH_WORKFLOW_FILE=".github/workflows/spec-kit-linear-sync.yml"
 readonly INSTALL_MCP_JSON_PATH=".mcp.json"
 
 # Local config template (lives in this extension's repo root). Copied
@@ -122,7 +122,7 @@ INSTALL_FLAG_WITH_ACTION=0
 INSTALL_FLAG_DEV=0
 INSTALL_FLAG_HELP=0
 
-# Set to 1 once we've determined the repo is the speckit-linear repo
+# Set to 1 once we've determined the repo is the spec-kit-linear repo
 # itself (T048 — dogfood guard). When set, the registered hooks are
 # emitted with a `condition: "${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}"`
 # marker so they don't auto-fire during the bridge's own development.
@@ -141,15 +141,15 @@ INSTALL_HAD_HARD_ERROR=0
 # -----------------------------------------------------------------------------
 
 install::_log_info() {
-    printf 'speckit-linear: install: %s\n' "$*" >&2
+    printf 'spec-kit-linear: install: %s\n' "$*" >&2
 }
 
 install::_log_warn() {
-    printf 'speckit-linear: install WARN  %s\n' "$*" >&2
+    printf 'spec-kit-linear: install WARN  %s\n' "$*" >&2
 }
 
 install::_log_error() {
-    printf 'speckit-linear: install ERROR %s\n' "$*" >&2
+    printf 'spec-kit-linear: install ERROR %s\n' "$*" >&2
 }
 
 # install::_die <exit-code> <message...>
@@ -175,7 +175,7 @@ install::usage() {
     cat <<'USAGE'
 Usage: install.sh [OPTIONS]
 
-Per-consumer-repo install ceremony for the speckit-linear bridge.
+Per-consumer-repo install ceremony for the spec-kit-linear bridge.
 
 Resolves the Linear Team + Project UUIDs (interactively or via flags),
 writes .specify/extensions/linear/linear-config.yml, registers the six
@@ -195,7 +195,7 @@ OPTIONS
   --non-interactive    Refuse to prompt; require --project (or
                        --auto-create) and --team to be set on the CLI.
   --with-action        Drop templates/github-action.yml into
-                       .github/workflows/speckit-linear-sync.yml and
+                       .github/workflows/spec-kit-linear-sync.yml and
                        print the gh secret set LINEAR_API_TOKEN command
                        per FR-029.
   --dev                Install from this repo's local checkout rather
@@ -566,7 +566,7 @@ install::_write_mcp_json_initial() {
         return
     fi
     local tmp
-    tmp="$(mktemp -t speckit-linear-mcp.XXXXXX)"
+    tmp="$(mktemp -t spec-kit-linear-mcp.XXXXXX)"
     jq -n --arg url "$INSTALL_LINEAR_MCP_URL" \
         '{ mcpServers: { linear: { url: $url } } }' >"$tmp"
     mv "$tmp" "$INSTALL_MCP_JSON_PATH"
@@ -583,7 +583,7 @@ install::_append_mcp_json_entry() {
         return
     fi
     local tmp
-    tmp="$(mktemp -t speckit-linear-mcp.XXXXXX)"
+    tmp="$(mktemp -t spec-kit-linear-mcp.XXXXXX)"
     jq --arg url "$INSTALL_LINEAR_MCP_URL" \
         '. as $root
          | ($root.mcpServers // {}) as $servers
@@ -638,7 +638,7 @@ install::check_env_file() {
 # Rule 1. The function returns the cumulative hard-error count via
 # INSTALL_HAD_HARD_ERROR; the caller decides whether to bail.
 install::run_dependency_report() {
-    printf '\nspeckit-linear install dependency report\n' >&2
+    printf '\nspec-kit-linear install dependency report\n' >&2
 
     install::_section "Runtime dependencies (FR-018b):"
     install::check_bash
@@ -661,8 +661,8 @@ install::run_dependency_report() {
     install::check_env_file
 
     if (( INSTALL_HAD_HARD_ERROR == 1 )); then
-        printf '\nspeckit-linear: install: dependency report has unresolved errors (✗ rows above).\n' >&2
-        printf '%s\n' "Resolve every ✗ row and re-run \`/speckit-linear-install\`." >&2
+        printf '\nspec-kit-linear: install: dependency report has unresolved errors (✗ rows above).\n' >&2
+        printf '%s\n' "Resolve every ✗ row and re-run \`/spec-kit-linear-install\`." >&2
         return 1
     fi
     return 0
@@ -671,7 +671,7 @@ install::run_dependency_report() {
 # =============================================================================
 # T048 — Dogfood-loop guard.
 #
-# When the install target is the speckit-linear repo itself, register
+# When the install target is the spec-kit-linear repo itself, register
 # the after_* hooks with a `condition:` predicate so they don't
 # auto-fire during the bridge's own development. The marker is
 # `${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}` — the operator opts in by
@@ -690,11 +690,11 @@ install::detect_dogfood_target() {
     # Two heuristics, EITHER triggering dogfood mode:
     #   (a) the config dir already exists AND we're inside this repo's tree —
     #       i.e. we're re-running install against an already-installed instance.
-    #   (b) the repo's basename starts with `speckit-linear` and the
+    #   (b) the repo's basename starts with `spec-kit-linear` and the
     #       extension manifest at this very script's parent path matches
     #       the repo root — i.e. we're installing this extension into
     #       itself.
-    if [[ "$repo_basename" == speckit-linear* ]] \
+    if [[ "$repo_basename" == spec-kit-linear* ]] \
         && [[ -f "${repo_root}/extension.yml" ]] \
         && grep -q 'id: "linear"' "${repo_root}/extension.yml" 2>/dev/null; then
         INSTALL_DOGFOOD_DETECTED=1
@@ -750,7 +750,7 @@ install::resolve_project_uuid() {
         # T077 dogfood pass; for now we surface a clear marker so the
         # operator knows the install left a placeholder.
         printf '00000000-0000-0000-0000-000000000000\n'
-        install::_log_warn "--auto-create requested; placeholder Project UUID written. Run /speckit-linear-install --project <UUID> after manually creating the Project in Linear, or wait for the T077 dogfood integration to land."
+        install::_log_warn "--auto-create requested; placeholder Project UUID written. Run /spec-kit-linear-install --project <UUID> after manually creating the Project in Linear, or wait for the T077 dogfood integration to land."
         return 0
     fi
     if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
@@ -831,7 +831,7 @@ install::write_config() {
 
     if [[ ! -f "$INSTALL_CONFIG_TEMPLATE" ]]; then
         install::_die 2 "config template missing: ${INSTALL_CONFIG_TEMPLATE}
-hint: re-run \`specify extension add linear\` (or pass --dev with a checkout of speckit-linear)"
+hint: re-run \`specify extension add linear\` (or pass --dev with a checkout of spec-kit-linear)"
     fi
 
     cp "$INSTALL_CONFIG_TEMPLATE" "$INSTALL_CONFIG_PATH"
@@ -869,7 +869,7 @@ install::_substitute_uuid_placeholder() {
     esac
 
     local tmp
-    tmp="$(mktemp -t speckit-linear-config.XXXXXX)"
+    tmp="$(mktemp -t spec-kit-linear-config.XXXXXX)"
     awk -v block="$parent_block" -v new_uuid="$uuid" '
         BEGIN { in_block = 0; replaced = 0 }
         {
@@ -1068,7 +1068,7 @@ install::_append_under_hook() {
     local hook="$1"
     local block="$2"
     local tmp
-    tmp="$(mktemp -t speckit-linear-ext-yml.XXXXXX)"
+    tmp="$(mktemp -t spec-kit-linear-ext-yml.XXXXXX)"
 
     # Strategy: walk the file. On hitting the header line we copy it
     # AND every line up to (and including) the last sub-entry of that
@@ -1155,8 +1155,8 @@ install::_create_hook_section() {
 # hard error so partial Phase 4 installs still progress.
 # =============================================================================
 
-readonly INSTALL_HOOK_MARKER_BEGIN="# >>> speckit-linear hook begin (FR-033) >>>"
-readonly INSTALL_HOOK_MARKER_END="# <<< speckit-linear hook end <<<"
+readonly INSTALL_HOOK_MARKER_BEGIN="# >>> spec-kit-linear hook begin (FR-033) >>>"
+readonly INSTALL_HOOK_MARKER_END="# <<< spec-kit-linear hook end <<<"
 
 install::install_git_hooks() {
     local hook_name
@@ -1169,7 +1169,7 @@ install::install_git_hooks() {
 #
 # Idempotent install of a single git hook. Handles three cases:
 #   1. No pre-existing hook  → drop our template verbatim.
-#   2. Pre-existing speckit-linear marker → leave alone (idempotent).
+#   2. Pre-existing spec-kit-linear marker → leave alone (idempotent).
 #   3. Pre-existing non-bridge hook → append our invocation in a
 #      MARKER_BEGIN ... MARKER_END block at the file's end.
 install::_install_one_git_hook() {
@@ -1192,7 +1192,7 @@ install::_install_one_git_hook() {
 
     if grep -qF "$INSTALL_HOOK_MARKER_BEGIN" "$target" 2>/dev/null; then
         # Case 2: already chained / installed. Re-run is a no-op.
-        install::_log_info "${target} already has speckit-linear hook (idempotent)"
+        install::_log_info "${target} already has spec-kit-linear hook (idempotent)"
         return 0
     fi
 
@@ -1203,7 +1203,7 @@ install::_install_one_git_hook() {
         # arguments for the hook type. We avoid running the template
         # verbatim (it may have its own `set -e` / shebang) and
         # instead embed a minimal forwarding call.
-        printf '# Added by speckit-linear install ceremony per FR-033.\n'
+        printf '# Added by spec-kit-linear install ceremony per FR-033.\n'
         printf '# Honour SPECKIT_LINEAR_DOGFOOD_SAFE in the bridge'\''s own repo.\n'
         case "$hook_name" in
             post-checkout)
@@ -1221,14 +1221,14 @@ install::_install_one_git_hook() {
         esac
         printf '%s\n' "$INSTALL_HOOK_MARKER_END"
     } >>"$target"
-    install::_log_info "chained speckit-linear hook into existing ${target}"
+    install::_log_info "chained spec-kit-linear hook into existing ${target}"
 }
 
 # =============================================================================
 # Optional: --with-action (FR-027 + FR-029).
 #
 # Copy `templates/github-action.yml` into the consumer's
-# `.github/workflows/speckit-linear-sync.yml`, then print the
+# `.github/workflows/spec-kit-linear-sync.yml`, then print the
 # `gh secret set LINEAR_API_TOKEN` provisioning instructions. The
 # bridge MUST NOT provision the secret on the operator's behalf
 # (FR-029).
@@ -1284,7 +1284,7 @@ install::main() {
         return 0
     fi
 
-    summary::start "speckit-linear install ceremony"
+    summary::start "spec-kit-linear install ceremony"
 
     if (( INSTALL_FLAG_DEV == 1 )); then
         install::_log_info "--dev mode: installing from local checkout at ${EXTENSION_ROOT} (not the CLI-shipped extension tree)"
@@ -1302,7 +1302,7 @@ install::main() {
     # ---- Detect dogfood target (T048) before any registration --------------
     install::detect_dogfood_target
     if (( INSTALL_DOGFOOD_DETECTED == 1 )); then
-        install::_log_warn "dogfood target detected (this is speckit-linear's own repo). Hooks will register with condition: \${SPECKIT_LINEAR_DOGFOOD_SAFE:-false} so they don't auto-fire during the bridge's own development."
+        install::_log_warn "dogfood target detected (this is spec-kit-linear's own repo). Hooks will register with condition: \${SPECKIT_LINEAR_DOGFOOD_SAFE:-false} so they don't auto-fire during the bridge's own development."
         summary::add "warned" "dogfood-loop guard active (export SPECKIT_LINEAR_DOGFOOD_SAFE=true to enable hooks)"
     fi
 
@@ -1333,9 +1333,9 @@ install::main() {
     # ---- Step 6: final summary + next-step pointer -------------------------
     {
         printf '\nNext steps:\n'
-        printf '  1. Run /speckit-linear-seed to populate workflow_state_uuids.\n'
+        printf '  1. Run /spec-kit-linear-seed to populate workflow_state_uuids.\n'
         printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
-        printf '  3. Verify by running /speckit-linear-push --dry-run.\n'
+        printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
     } >&2
 
     summary::emit

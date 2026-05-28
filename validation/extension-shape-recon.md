@@ -1,4 +1,4 @@
-# Spec-Kit Extension Shape — Recon for speckit-linear
+# Spec-Kit Extension Shape — Recon for spec-kit-linear
 
 Source-of-truth research for the file/directory contract `specify extension add linear` requires. Built from (1) `~/Code/PP/spec-kit-red-team/` as the sibling extension, (2) the bundled `speckit-taskstoissues` skill, (3) the specify-cli Python source at `~/.local/share/uv/tools/specify-cli/lib/python3.13/site-packages/specify_cli/`.
 
@@ -84,7 +84,7 @@ defaults:                              # optional, surfaced via ConfigManager
 
 ## 2. speckit-taskstoissues — built-in skill, NOT an extension
 
-File: `/Users/ashbrener/Code/AI/speckit-linear/.claude/skills/speckit-taskstoissues/SKILL.md` (107 lines).
+File: `/Users/ashbrener/Code/AI/spec-kit-linear/.claude/skills/speckit-taskstoissues/SKILL.md` (107 lines).
 
 ### Shape differences from a red-team-style extension
 
@@ -99,7 +99,7 @@ File: `/Users/ashbrener/Code/AI/speckit-linear/.claude/skills/speckit-taskstoiss
 
 Critical mechanism (SKILL.md lines 24-55 and 75-106): every core speckit command runs Pre/Post-Execution blocks that (1) read `.specify/extensions.yml`, (2) look up `hooks.before_<name>` / `hooks.after_<name>`, (3) for each enabled hook print an `EXECUTE_COMMAND` directive — mandatory (`optional: false`) MUST be awaited, optional asks the user, (4) translate manifest dot-names (`speckit.red-team.gate`) to slash-command form (`/speckit-red-team-gate`).
 
-So red-team's `before_plan` fires via: `/speckit-plan` reads `.specify/extensions.yml`, sees the hook entry, emits `EXECUTE_COMMAND: speckit.red-team.gate`, host agent invokes `/speckit-red-team-gate`. **Implication for speckit-linear**: a `hooks.after_tasks` entry auto-fires post-tasks; omitting hooks gives on-demand only. No patching of core skills required either way.
+So red-team's `before_plan` fires via: `/speckit-plan` reads `.specify/extensions.yml`, sees the hook entry, emits `EXECUTE_COMMAND: speckit.red-team.gate`, host agent invokes `/speckit-red-team-gate`. **Implication for spec-kit-linear**: a `hooks.after_tasks` entry auto-fires post-tasks; omitting hooks gives on-demand only. No patching of core skills required either way.
 
 ---
 
@@ -146,7 +146,7 @@ For an extension with `id: linear`, installing into project root `<repo>/`:
                                         # adds installed: [linear] and any hooks
 ```
 
-And, when project was initialised with `--ai-skills` (Kimi auto-qualifies), `_register_extension_skills()` writes one SKILL.md per command at `<repo>/.claude/skills/speckit-linear-<sub>/SKILL.md` — won't overwrite if file exists. Generated frontmatter contains `name: speckit-linear-<sub>`, `description` (from command frontmatter, else `"Extension command: ..."`), `metadata.source: extension:linear`, plus integration keys.
+And, when project was initialised with `--ai-skills` (Kimi auto-qualifies), `_register_extension_skills()` writes one SKILL.md per command at `<repo>/.claude/skills/spec-kit-linear-<sub>/SKILL.md` — won't overwrite if file exists. Generated frontmatter contains `name: spec-kit-linear-<sub>`, `description` (from command frontmatter, else `"Extension command: ..."`), `metadata.source: extension:linear`, plus integration keys.
 
 ### `.specify/extensions.yml` shape (project-level config, written by HookExecutor)
 
@@ -166,7 +166,7 @@ hooks:
       prompt: "Running red team gate check..."
       description: "..."
       condition: null
-  after_tasks:                          # example for speckit-linear
+  after_tasks:                          # example for spec-kit-linear
     - extension: linear
       command: speckit.linear.push
       enabled: true
@@ -186,10 +186,10 @@ Each `(extension, hook_name)` is deduplicated on register (extensions.py:2607-26
 
 ---
 
-## 4. Concrete file layout we should ship in `speckit-linear`
+## 4. Concrete file layout we should ship in `spec-kit-linear`
 
 ```
-speckit-linear/                                 # repo root (this directory)
+spec-kit-linear/                                 # repo root (this directory)
 ├── extension.yml                               # REQUIRED — manifest, schema_version: "1.0"
 ├── config-template.yml                         # ships per-project Linear config skeleton
 │                                               # (team_id, project_id, status mappings, etc.)
@@ -201,14 +201,14 @@ speckit-linear/                                 # repo root (this directory)
 │                                               # specs/, CLAUDE.md, .claude/ from the
 │                                               # copytree into consumer projects
 ├── commands/
-│   ├── linear-push.md                          # /speckit-linear-push — convert tasks → Linear issues
-│   ├── linear-pull.md                          # /speckit-linear-pull — sync state from Linear (if in spec)
-│   └── linear-status.md                        # /speckit-linear-status — show sync state (if in spec)
+│   ├── linear-push.md                          # /spec-kit-linear-push — convert tasks → Linear issues
+│   ├── linear-pull.md                          # /spec-kit-linear-pull — sync state from Linear (if in spec)
+│   └── linear-status.md                        # /spec-kit-linear-status — show sync state (if in spec)
 └── docs/
     └── protocol.md                             # optional extended docs (ignored via .extensionignore)
 ```
 
-### Minimal `extension.yml` skeleton for speckit-linear
+### Minimal `extension.yml` skeleton for spec-kit-linear
 
 ```yaml
 schema_version: "1.0"
@@ -218,7 +218,7 @@ extension:
   version: "0.1.0"
   description: "Sync spec-kit tasks to Linear issues (sibling to GitHub Issues skill)."
   author: "Ash Brener"
-  repository: "https://github.com/ashbrener/speckit-linear"
+  repository: "https://github.com/ashbrener/spec-kit-linear"
   license: "MIT"
 requires:
   speckit_version: ">=0.1.0"
@@ -247,22 +247,22 @@ tags: ["issue-tracker", "linear", "tasks-sync"]
 
 ```bash
 # Dev iteration (this repo, before catalog PR):
-specify extension add --dev /Users/ashbrener/Code/AI/speckit-linear
+specify extension add --dev /Users/ashbrener/Code/AI/spec-kit-linear
 
 # Eventually (after PR to github/spec-kit extensions/catalog.community.json):
 specify extension add linear
 
 # Or one-shot from a tag without catalog:
-specify extension add --from https://github.com/ashbrener/speckit-linear/archive/refs/tags/v0.1.0.zip
+specify extension add --from https://github.com/ashbrener/spec-kit-linear/archive/refs/tags/v0.1.0.zip
 ```
 
-After install, consumer repo gains: `.specify/extensions/linear/` (the full tree), `.specify/extensions/.registry` (JSON, linear entry added), `.specify/extensions.yml` (hook entry if we ship `hooks:`), and — if they used `--ai-skills` at init — `.claude/skills/speckit-linear-push/SKILL.md` auto-generated.
+After install, consumer repo gains: `.specify/extensions/linear/` (the full tree), `.specify/extensions/.registry` (JSON, linear entry added), `.specify/extensions.yml` (hook entry if we ship `hooks:`), and — if they used `--ai-skills` at init — `.claude/skills/spec-kit-linear-push/SKILL.md` auto-generated.
 
 ---
 
 ## 5. Open questions for `/speckit-plan`
 
-1. **Config bootstrap UX.** CLI does NOT copy `config-template.yml → linear-config.yml`. Red-team errors at runtime pointing at the template. Should `/speckit-linear-push` do the same, or copy-on-first-run with a confirm prompt?
+1. **Config bootstrap UX.** CLI does NOT copy `config-template.yml → linear-config.yml`. Red-team errors at runtime pointing at the template. Should `/spec-kit-linear-push` do the same, or copy-on-first-run with a confirm prompt?
 2. **Hook integration scope.** Wire `hooks.after_tasks` as mandatory (`optional: false` — auto-fires on every `/speckit-tasks`), optional (user confirms), or no hook (manual only)? Decides whether the extension mutates the default tasks flow.
 3. **Secrets path.** Linear API needs an OAuth token / API key. ConfigManager supports `local-config.yml` (gitignored) and `SPECKIT_LINEAR_*` env vars (extensions.py:2200-2236). Mandate env, document local-config, or both?
 4. **MCP dependency declaration.** `requires:` only validates `speckit_version`. A Linear MCP dependency has no first-class declaration — must assert at command runtime (like red-team asserts the lens catalog exists).

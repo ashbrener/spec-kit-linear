@@ -1,10 +1,10 @@
 # =============================================================================
-# speckit-linear-sync — Layer E webhook for the spec-kit <-> Linear bridge
+# spec-kit-linear-sync — Layer E webhook for the spec-kit <-> Linear bridge
 # =============================================================================
 #
-# This file is the CONSUMER-SIDE workflow shipped by the `speckit-linear`
+# This file is the CONSUMER-SIDE workflow shipped by the `spec-kit-linear`
 # extension. It is copied verbatim into each consumer repo at
-# `.github/workflows/speckit-linear-sync.yml` by
+# `.github/workflows/spec-kit-linear-sync.yml` by
 # `specify extension add linear --with-action` (or by hand if the operator
 # declined the auto-install). It is NOT the bridge's own CI workflow — the
 # bridge's CI lives at `.github/workflows/ci.yml` in the bridge repo and is
@@ -24,7 +24,7 @@
 # `closed` events where `merged == false` (drop-closed PRs) are filtered out
 # at the job level — those intentionally leave Linear at its last-known
 # state. The operator can manually move the spec Issue to `cancelled` via
-# `/speckit-linear-push` from a worktree if desired (that's Layer D's job).
+# `/spec-kit-linear-push` from a worktree if desired (that's Layer D's job).
 #
 # WHAT IT DOES NOT DO (constitutional firebreak — Principle III)
 # --------------------------------------------------------------
@@ -55,7 +55,7 @@
 # token handling in operator hands). The three-step ceremony:
 #
 #   1. Visit https://linear.app/settings/api and create a new personal API
-#      key. Suggested name: `speckit-linear-sync`. Copy the token — it
+#      key. Suggested name: `spec-kit-linear-sync`. Copy the token — it
 #      starts with `lin_api_…`.
 #
 #      Token scope trade-off:
@@ -83,7 +83,7 @@
 # Linear's `issueUpdate` with the same `stateId` is a no-op when the Issue
 # is already in that state (no activity-log entry written). Re-firing on
 # the same event produces the same Linear state. Running this Action AND
-# then `/speckit-linear-push` from a worktree produces the same Linear
+# then `/spec-kit-linear-push` from a worktree produces the same Linear
 # state. Either layer alone keeps the bridge converging.
 #
 # OBSERVABILITY (Principle VIII)
@@ -110,7 +110,7 @@
 # Requirements:        FR-027, FR-028, FR-029, FR-030, FR-032
 # =============================================================================
 
-name: speckit-linear-sync
+name: spec-kit-linear-sync
 
 # Trigger on the three PR events that change spec lifecycle phase.
 # `synchronize` is intentionally excluded — Layer D handles mid-PR commits.
@@ -138,7 +138,7 @@ permissions:
 # partial state to preserve. T077 dogfood may revise this if races prove
 # benign in practice (see `webhook-action.md` §10).
 concurrency:
-  group: speckit-linear-sync-${{ github.event.pull_request.head.ref }}
+  group: spec-kit-linear-sync-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -211,7 +211,7 @@ jobs:
       #
       # All four are REQUIRED by `contracts/config-schema.json`. Any
       # missing value means the operator forgot to run
-      # `/speckit-linear-seed` (or a stale checkout pre-dates the seed).
+      # `/spec-kit-linear-seed` (or a stale checkout pre-dates the seed).
       # Fail red with the exact remediation command.
       - name: Read linear-config.yml
         id: read_config
@@ -248,12 +248,12 @@ jobs:
           fi
           if [[ -z "$STATE_READY" || "$STATE_READY" == "null" ]]; then
             echo "::error::State 'ready_to_merge' UUID missing in linear.workflow_state_uuids."
-            echo "::error::Run '/speckit-linear-seed' to capture workflow-state UUIDs (FR-032)."
+            echo "::error::Run '/spec-kit-linear-seed' to capture workflow-state UUIDs (FR-032)."
             exit 1
           fi
           if [[ -z "$STATE_MERGED" || "$STATE_MERGED" == "null" ]]; then
             echo "::error::State 'merged' UUID missing in linear.workflow_state_uuids."
-            echo "::error::Run '/speckit-linear-seed' to capture workflow-state UUIDs (FR-032)."
+            echo "::error::Run '/spec-kit-linear-seed' to capture workflow-state UUIDs (FR-032)."
             exit 1
           fi
 
@@ -336,7 +336,7 @@ jobs:
           if [[ -z "${LINEAR_API_TOKEN:-}" ]]; then
             echo "::error::LINEAR_API_TOKEN secret is missing or empty."
             echo "::error::Provision it with: gh secret set LINEAR_API_TOKEN -R ${GITHUB_REPOSITORY}"
-            echo "::error::See https://linear.app/settings/api to mint a token (suggested name: speckit-linear-sync)."
+            echo "::error::See https://linear.app/settings/api to mint a token (suggested name: spec-kit-linear-sync)."
             exit 1
           fi
 
@@ -488,7 +488,7 @@ jobs:
             # A common one: stateId points at a deleted workflow state.
             # The error body will name it ("STATE_NOT_FOUND" or similar);
             # surface the remediation command alongside.
-            echo "::error::If the error is STATE_NOT_FOUND or similar, run '/speckit-linear-seed --force' to recreate workflow states and update linear-config.yml."
+            echo "::error::If the error is STATE_NOT_FOUND or similar, run '/spec-kit-linear-seed --force' to recreate workflow states and update linear-config.yml."
             exit 1
           fi
 

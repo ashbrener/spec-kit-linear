@@ -33,7 +33,7 @@ flagged inline as `confirm during T077 dogfood`.
 ## 2. Filesystem-side entities
 
 The bridge only touches files under the consumer repository. There is
-no `~/.config/speckit-linear/`, no SQLite, no JSON state cache (per
+no `~/.config/spec-kit-linear/`, no SQLite, no JSON state cache (per
 `plan.md` Storage section + Principle V).
 
 ### 2.1 Consumer repository
@@ -188,7 +188,7 @@ sync:
 
 webhook:
   installed: bool            # flipped true by install when YAML committed
-  workflow_path: string      # `.github/workflows/speckit-linear-sync.yml`
+  workflow_path: string      # `.github/workflows/spec-kit-linear-sync.yml`
   secret_name: string        # `LINEAR_API_TOKEN` (FR-029)
 
 git_hooks:
@@ -314,7 +314,7 @@ One Linear Issue per spec. The central entity the bridge manipulates.
 it without disturbing operator-added prose around it:
 
 ```markdown
-<!-- speckit-linear:memory:begin -->
+<!-- spec-kit-linear:memory:begin -->
 **Phase**: <lifecycle_phase>
 **Current task phase**: Phase <N> — <Name>  *(if applicable)*
 **Current task**: T###-NNN — <title>  *(if applicable)*
@@ -322,7 +322,7 @@ it without disturbing operator-added prose around it:
 **Worktree(s)**: `<absolute-path-1>` [, `<absolute-path-2>`, …]
 **Last touched (disk)**: YYYY-MM-DDTHH:MM:SSZ
 **Source**: <github-url-to-specs/NNN-feature/spec.md>
-<!-- speckit-linear:memory:end -->
+<!-- spec-kit-linear:memory:end -->
 ```
 
 **Invariants**

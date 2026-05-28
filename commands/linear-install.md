@@ -15,16 +15,16 @@ arguments:
     description: refuse interactive prompts; require project/auto-create + team to be passed
     optional: true
   - name: with-action
-    description: also install the Layer E GitHub Action template at .github/workflows/speckit-linear-sync.yml
+    description: also install the Layer E GitHub Action template at .github/workflows/spec-kit-linear-sync.yml
     optional: true
   - name: dev
-    description: install from the local speckit-linear checkout rather than via `specify extension add` (dogfood)
+    description: install from the local spec-kit-linear checkout rather than via `specify extension add` (dogfood)
     optional: true
 ---
 
 # `/speckit.linear.install`
 
-Run the per-consumer-repo install ceremony for the speckit-linear
+Run the per-consumer-repo install ceremony for the spec-kit-linear
 bridge. This is the load-bearing one-shot step that wires a fresh
 consumer repo to its Linear workspace: dependencies are verified, the
 per-repo `linear-config.yml` is written, the six `after_*` hooks are
@@ -40,7 +40,7 @@ existing Project UUIDs are not overwritten without operator action.
 **Authority**: this command never mutates Linear (other than the
 optional `--auto-create` Project bootstrap, which is deferred to T077
 dogfood). Workspace seeding (workflow states, labels) is a separate
-command — `/speckit-linear-seed`.
+command — `/spec-kit-linear-seed`.
 **Layer**: implements the install side of Layer D. The optional
 `--with-action` flag drops the Layer E template; the secret
 provisioning (`gh secret set LINEAR_API_TOKEN`) stays with the
@@ -61,8 +61,8 @@ available via `bash src/install.sh` directly.
 | `auto-create` | false | Create a new Linear Project named after the repo basename. Mutually exclusive with `project`. |
 | `team` | auto-detect / prompt | Linear Team UUID. Required if `non-interactive=true`. |
 | `non-interactive` | false | Refuse to prompt; require `project` (or `auto-create`) and `team` to be set on the CLI. Suitable for CI re-runs. |
-| `with-action` | false | Also drop `templates/github-action.yml` into `.github/workflows/speckit-linear-sync.yml` per FR-027, and surface the FR-029 secret-provisioning command. |
-| `dev` | false | Install from the local speckit-linear checkout — used when the bridge is dogfooding its own repo (T077). |
+| `with-action` | false | Also drop `templates/github-action.yml` into `.github/workflows/spec-kit-linear-sync.yml` per FR-027, and surface the FR-029 secret-provisioning command. |
+| `dev` | false | Install from the local spec-kit-linear checkout — used when the bridge is dogfooding its own repo (T077). |
 
 `project` and `auto-create` are mutually exclusive (passing both
 exits 2). `non-interactive` without one of them, or without `team`,
@@ -96,7 +96,7 @@ also exits 2.
      The covered surfaces are: bash, curl, jq, git, gh (optional),
      `.mcp.json` Linear MCP entry, Linear MCP OAuth cache,
      `.specify/` layout, `.git/hooks/` writability, `.env`.
-   - Detects whether the target repo is the speckit-linear repo
+   - Detects whether the target repo is the spec-kit-linear repo
      itself (the **dogfood guard**, T048). When detected, the hook
      entries are emitted with
      `condition: "${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}"` so they
@@ -122,12 +122,12 @@ also exits 2.
    - Installs `post-checkout`, `post-commit`, `post-merge` git
      hooks per FR-033. If a hook of the same name already exists
      (non-bridge content), the install chains a marker block
-     (`# >>> speckit-linear hook begin (FR-033) >>>`) onto the end of
+     (`# >>> spec-kit-linear hook begin (FR-033) >>>`) onto the end of
      the existing hook rather than overwriting it. Re-installs are
      idempotent — the marker is the detection signal.
    - When `--with-action` is set, copies
      `templates/github-action.yml` into
-     `.github/workflows/speckit-linear-sync.yml` (preserves an
+     `.github/workflows/spec-kit-linear-sync.yml` (preserves an
      operator-customised file if one already exists). Surfaces the
      `gh secret set LINEAR_API_TOKEN -R <owner>/<repo>` command per
      FR-029. The bridge **does not** provision the secret on the
@@ -139,7 +139,7 @@ also exits 2.
 
    ```text
    ===== speckit.linear summary =====
-   speckit-linear install ceremony
+   spec-kit-linear install ceremony
    Created: 2   Updated: 2   Archived: 0
    Skipped: 1   Warned: 0     Errors: 0
    ----- warnings -----
@@ -154,7 +154,7 @@ also exits 2.
 4. **Handle the exit code.** Per `contracts/command-shapes.md` §5.6:
    - `0` — install completed; all required dependencies green.
      Show the summary and direct the operator to run
-     `/speckit-linear-seed` next.
+     `/spec-kit-linear-seed` next.
    - `1` — recoverable transient failure (e.g. Linear API blip
      during the deferred `--auto-create` Project bootstrap, when
      enabled). Re-run.
@@ -176,7 +176,7 @@ also exits 2.
   consumer repo** at adoption time. Subsequent invocations are
   idempotent (re-running just re-verifies dependencies and reports
   drift).
-- **Not auto-fired.** Unlike `/speckit-linear-push`, this command is
+- **Not auto-fired.** Unlike `/spec-kit-linear-push`, this command is
   never wired to any `after_*` hook or git hook. It only runs when
   the operator explicitly invokes it.
 
@@ -193,7 +193,7 @@ also exits 2.
   - `.specify/extensions.yml` (FR-031 — `after_*` hooks)
   - `.git/hooks/{post-checkout,post-commit,post-merge}` (FR-033)
   - `.mcp.json` (FR-018b — Linear MCP entry, auto-added if absent)
-  - `.github/workflows/speckit-linear-sync.yml` (FR-027 — only when
+  - `.github/workflows/spec-kit-linear-sync.yml` (FR-027 — only when
     `--with-action` is set)
 
 No Linear-side mutations happen (other than the deferred
@@ -226,7 +226,7 @@ Selected named cases:
   deferred to T077 dogfood. Re-run with `--project <UUID>` once
   the Project exists in Linear, or wait for the dogfood
   integration.
-- `dogfood target detected` — warning. The repo is speckit-linear
+- `dogfood target detected` — warning. The repo is spec-kit-linear
   itself; hook entries get a `${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}`
   condition marker so they don't auto-fire during the bridge's own
   development.

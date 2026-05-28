@@ -96,8 +96,8 @@ readonly RECONCILE_CONFIG_PATH_DEFAULT=".specify/extensions/linear/linear-config
 # The fenced markers around the memory block in spec Issue descriptions
 # (FR-004). Bridge rewrites everything between BEGIN and END on every
 # reconcile; operator-added prose ABOVE or BELOW the fences survives.
-readonly RECONCILE_MEMORY_BEGIN="<!-- speckit-linear:memory:begin -->"
-readonly RECONCILE_MEMORY_END="<!-- speckit-linear:memory:end -->"
+readonly RECONCILE_MEMORY_BEGIN="<!-- spec-kit-linear:memory:begin -->"
+readonly RECONCILE_MEMORY_END="<!-- spec-kit-linear:memory:end -->"
 
 # Header preface for task-phase sub-issue descriptions (FR-006). The
 # one-way semantics must be impossible to miss per spec. Backticks here
@@ -173,7 +173,7 @@ reconcile::log() {
     if (( ARG_QUIET == 1 )); then
         return 0
     fi
-    printf 'speckit-linear: %s\n' "$*" >&2
+    printf 'spec-kit-linear: %s\n' "$*" >&2
 }
 
 # -----------------------------------------------------------------------------
@@ -207,7 +207,7 @@ reconcile::parse_args() {
         case "$1" in
             --spec)
                 if (( $# < 2 )); then
-                    printf 'speckit-linear: --spec requires a feature number argument\n' >&2
+                    printf 'spec-kit-linear: --spec requires a feature number argument\n' >&2
                     reconcile::usage
                     exit 2
                 fi
@@ -236,7 +236,7 @@ reconcile::parse_args() {
                 ;;
             --config)
                 if (( $# < 2 )); then
-                    printf 'speckit-linear: --config requires a path argument\n' >&2
+                    printf 'spec-kit-linear: --config requires a path argument\n' >&2
                     reconcile::usage
                     exit 2
                 fi
@@ -252,7 +252,7 @@ reconcile::parse_args() {
                 exit 0
                 ;;
             *)
-                printf 'speckit-linear: unknown argument: %s\n' "$1" >&2
+                printf 'spec-kit-linear: unknown argument: %s\n' "$1" >&2
                 reconcile::usage
                 exit 2
                 ;;
@@ -266,17 +266,17 @@ reconcile::parse_args() {
 
     # Exactly one of --spec / --all must be supplied.
     if [[ -z "$ARG_SPEC" ]] && (( ARG_ALL == 0 )); then
-        printf 'speckit-linear: one of --spec NNN or --all is required\n' >&2
+        printf 'spec-kit-linear: one of --spec NNN or --all is required\n' >&2
         reconcile::usage
         exit 2
     fi
     if [[ -n "$ARG_SPEC" ]] && (( ARG_ALL == 1 )); then
-        printf 'speckit-linear: --spec and --all are mutually exclusive\n' >&2
+        printf 'spec-kit-linear: --spec and --all are mutually exclusive\n' >&2
         reconcile::usage
         exit 2
     fi
     if [[ -n "$ARG_SPEC" && ! "$ARG_SPEC" =~ ^[0-9]+$ ]]; then
-        printf 'speckit-linear: --spec value must be numeric (got %q)\n' "$ARG_SPEC" >&2
+        printf 'spec-kit-linear: --spec value must be numeric (got %q)\n' "$ARG_SPEC" >&2
         exit 2
     fi
 
@@ -295,7 +295,7 @@ reconcile::parse_args() {
 reconcile::load_config() {
     local path="${RECONCILE_CONFIG_PATH}"
     if [[ ! -e "$path" ]]; then
-        summary::add error "linear-config.yml not found at ${path}; run /speckit-linear-install"
+        summary::add error "linear-config.yml not found at ${path}; run /spec-kit-linear-install"
         reconcile::promote_exit 2
         return 2
     fi
@@ -392,7 +392,7 @@ reconcile::json_array() {
 # Memory block rendering (FR-004).
 #
 # Produces the markdown fragment that lives inside the spec Issue
-# description's <!-- speckit-linear:memory:begin --> / :end --> fences.
+# description's <!-- spec-kit-linear:memory:begin --> / :end --> fences.
 # The fence markers themselves are added by the caller so the
 # description-merge logic can strip and re-insert atomically.
 # =============================================================================
@@ -1608,7 +1608,7 @@ reconcile::sync_clarify_comments() {
         : "${bullet_count:-0}"
 
         local marker
-        marker="<!-- speckit-linear: clarify-session ${date} -->"
+        marker="<!-- spec-kit-linear: clarify-session ${date} -->"
 
         # Build the comment body: marker + heading + verbatim bullets.
         local bullets

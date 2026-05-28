@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ashbrener/speckit-linear/specs/001-spec-kit-linear-bridge/contracts/config-schema.json",
-  "title": "speckit-linear per-consumer-repo config",
+  "$id": "https://github.com/ashbrener/spec-kit-linear/specs/001-spec-kit-linear-bridge/contracts/config-schema.json",
+  "title": "spec-kit-linear per-consumer-repo config",
   "description": "Schema for .specify/extensions/linear/linear-config.yml. Mirrors config-template.yml. Locks the per-repo Linear binding (Team UUID + Project UUID + workflow_state_uuids map) plus operator-tweakable sync toggles, webhook installation status, and local git-hook installation status. Loaded by src/config.sh at the start of every reconcile; validation failures abort the run with exit code 2 per FR-022.",
   "type": "object",
   "additionalProperties": false,
@@ -226,7 +226,7 @@
         "workflow_path": {
           "type": "string",
           "description": "Repo-relative path to the installed Action workflow. Locked by FR-027; never customise.",
-          "const": ".github/workflows/speckit-linear-sync.yml"
+          "const": ".github/workflows/spec-kit-linear-sync.yml"
         },
         "secret_name": {
           "type": "string",

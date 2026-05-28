@@ -83,7 +83,7 @@ readonly -a CONFIG_DEFAULT_STATE_KEYS=(
 # funnel through here.
 config::_die() {
     local message="$*"
-    printf 'speckit-linear: config: %s\n' "${message}" >&2
+    printf 'spec-kit-linear: config: %s\n' "${message}" >&2
     exit 2
 }
 
@@ -93,7 +93,7 @@ config::_die() {
 # `config::validate` accumulates several issues before exiting).
 config::_warn() {
     local message="$*"
-    printf 'speckit-linear: config: %s\n' "${message}" >&2
+    printf 'spec-kit-linear: config: %s\n' "${message}" >&2
 }
 
 # config::_strip <raw>
@@ -256,7 +256,7 @@ config::load() {
 
     if [[ ! -e "${path}" ]]; then
         config::_die "file not found: ${path}
-hint: copy config-template.yml to ${path} and run \`/speckit-linear-install\` to populate UUIDs"
+hint: copy config-template.yml to ${path} and run \`/spec-kit-linear-install\` to populate UUIDs"
     fi
 
     if [[ ! -r "${path}" ]]; then
@@ -329,7 +329,7 @@ hint: valid phases are ${CONFIG_WORKFLOW_PHASES[*]}"
     local value="${CONFIG_VALUES[linear.workflow_state_uuids.${phase}]:-}"
     if [[ -z "${value}" ]]; then
         config::_die "${CONFIG_LOADED_PATH}: linear.workflow_state_uuids.${phase} is missing
-hint: run \`/speckit-linear-seed\` to re-capture workflow-state UUIDs"
+hint: run \`/spec-kit-linear-seed\` to re-capture workflow-state UUIDs"
     fi
     printf '%s\n' "${value}"
 }
@@ -362,7 +362,7 @@ hint: valid keys are ${CONFIG_DEFAULT_STATE_KEYS[*]}"
     local value="${CONFIG_VALUES[linear.default_state_uuids.${key}]:-}"
     if [[ -z "${value}" ]]; then
         config::_die "${CONFIG_LOADED_PATH}: linear.default_state_uuids.${key} is missing
-hint: run \`/speckit-linear-seed\` to capture stock team-state UUIDs (todo/in_progress/done)"
+hint: run \`/spec-kit-linear-seed\` to capture stock team-state UUIDs (todo/in_progress/done)"
     fi
     printf '%s\n' "${value}"
 }
@@ -406,7 +406,7 @@ config::validate() {
         elif ! [[ "${value}" =~ ${CONFIG_UUID_REGEX} ]]; then
             problems+=("${path}: ${field}: malformed UUID ('${value}')")
         elif [[ "${value}" == "00000000-0000-0000-0000-000000000000" ]]; then
-            problems+=("${path}: ${field}: still set to the zero placeholder UUID; run \`/speckit-linear-install\` to resolve it")
+            problems+=("${path}: ${field}: still set to the zero placeholder UUID; run \`/spec-kit-linear-install\` to resolve it")
         fi
     done
 
@@ -416,11 +416,11 @@ config::validate() {
         local key="linear.workflow_state_uuids.${phase}"
         local value="${CONFIG_VALUES[${key}]:-}"
         if [[ -z "${value}" ]]; then
-            problems+=("${path}: ${key}: missing (run \`/speckit-linear-seed\`)")
+            problems+=("${path}: ${key}: missing (run \`/spec-kit-linear-seed\`)")
         elif ! [[ "${value}" =~ ${CONFIG_UUID_REGEX} ]]; then
             problems+=("${path}: ${key}: malformed UUID ('${value}')")
         elif [[ "${value}" == "00000000-0000-0000-0000-000000000000" ]]; then
-            problems+=("${path}: ${key}: still set to the zero placeholder UUID; run \`/speckit-linear-seed\`")
+            problems+=("${path}: ${key}: still set to the zero placeholder UUID; run \`/spec-kit-linear-seed\`")
         fi
     done
 
@@ -444,7 +444,7 @@ config::validate() {
             elif ! [[ "${dvalue}" =~ ${CONFIG_UUID_REGEX} ]]; then
                 problems+=("${path}: ${dkey}: malformed UUID ('${dvalue}')")
             elif [[ "${dvalue}" == "00000000-0000-0000-0000-000000000000" ]]; then
-                problems+=("${path}: ${dkey}: still set to the zero placeholder UUID; run \`/speckit-linear-seed\`")
+                problems+=("${path}: ${dkey}: still set to the zero placeholder UUID; run \`/spec-kit-linear-seed\`")
             fi
         done
     fi

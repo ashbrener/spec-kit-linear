@@ -23,7 +23,7 @@
 #
 # Maps to FR-022 + FR-024 + contracts/command-shapes.md §1.7 ("`linear
 # .workflow_state_uuids.*` unfilled (all zeroes) → Exit 2 with 'Run
-# `/speckit-linear-seed` first'").
+# `/spec-kit-linear-seed` first'").
 #
 # Mock strategy: reuses the curl-shim. We deliberately stage no
 # canned responses for the seed-time queries — the reconcile path
@@ -57,7 +57,7 @@ linear:
     name: "OSH-INFRA"
   project:
     id: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
-    name: "speckit-linear-test"
+    name: "spec-kit-linear-test"
   workflow_state_uuids:
     specifying:     "00000000-0000-0000-0000-000000000000"
     clarifying:     "00000000-0000-0000-0000-000000000000"
@@ -80,7 +80,7 @@ sync:
 
 webhook:
   installed: false
-  workflow_path: ".github/workflows/speckit-linear-sync.yml"
+  workflow_path: ".github/workflows/spec-kit-linear-sync.yml"
   secret_name: "LINEAR_API_TOKEN"
 
 git_hooks:
@@ -119,13 +119,13 @@ YAML
     [ "$mutations" -eq 0 ]
 
     # ---- error message names `speckit.linear.seed` ----
-    # contracts/command-shapes.md §1.7: "Run `/speckit-linear-seed`
+    # contracts/command-shapes.md §1.7: "Run `/spec-kit-linear-seed`
     # first" — we accept the three-dot form, the slash form, or the
     # bare `seed` token because the exact phrasing isn't load-bearing
     # so long as the pointer is unambiguous.
     [[ "$output" == *"speckit.linear.seed"* ]] || \
-        [[ "$output" == *"/speckit-linear-seed"* ]] || \
-        [[ "$output" == *"speckit-linear-seed"* ]] || \
+        [[ "$output" == *"/spec-kit-linear-seed"* ]] || \
+        [[ "$output" == *"spec-kit-linear-seed"* ]] || \
         [[ "$output" == *"linear seed"* ]] || \
         [[ "$output" == *"run seed"* ]] || \
         [[ "$output" == *"Run seed"* ]]

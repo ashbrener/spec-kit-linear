@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 # =============================================================================
-# speckit-linear: post-checkout
+# spec-kit-linear: post-checkout
 #
 # Fires AFTER `git checkout` (and `git switch`) finishes. Git invokes this
 # hook with three positional arguments:
@@ -48,7 +48,7 @@ SPECKIT_LINEAR_ROOT="__SPECKIT_LINEAR_ROOT__"
 RECONCILER="${SPECKIT_LINEAR_ROOT}/src/reconcile.sh"
 
 # Dogfood guard: the bridge's own dev repo installs these hooks too, but
-# we don't want every local commit/checkout in speckit-linear itself to
+# we don't want every local commit/checkout in spec-kit-linear itself to
 # fire the reconciler unless the dogfood loop has been explicitly opted
 # in. Anything other than the literal string `true` is a no-op.
 if [[ "${SPECKIT_LINEAR_DOGFOOD_SAFE:-true}" != "true" ]]; then

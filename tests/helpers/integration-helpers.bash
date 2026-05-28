@@ -195,7 +195,7 @@ linear:
     name: "OSH-INFRA"
   project:
     id: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
-    name: "speckit-linear-test"
+    name: "spec-kit-linear-test"
   workflow_state_uuids:
     specifying:     "cccccccc-0001-4ccc-cccc-cccccccccccc"
     clarifying:     "cccccccc-0002-4ccc-cccc-cccccccccccc"
@@ -218,7 +218,7 @@ sync:
 
 webhook:
   installed: false
-  workflow_path: ".github/workflows/speckit-linear-sync.yml"
+  workflow_path: ".github/workflows/spec-kit-linear-sync.yml"
   secret_name: "LINEAR_API_TOKEN"
 
 git_hooks:

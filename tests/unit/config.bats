@@ -89,7 +89,7 @@ sync:
 
 webhook:
   installed: false
-  workflow_path: ".github/workflows/speckit-linear-sync.yml"
+  workflow_path: ".github/workflows/spec-kit-linear-sync.yml"
   secret_name: "LINEAR_API_TOKEN"
 
 git_hooks:
@@ -232,7 +232,7 @@ EOF
     [[ "${output}" == *"file not found"* ]]
     [[ "${output}" == *"${missing}"* ]]
     # Operator hint must point at the install command.
-    [[ "${output}" == *"speckit-linear-install"* ]]
+    [[ "${output}" == *"spec-kit-linear-install"* ]]
 }
 
 @test "config::load with zero arguments exits 2" {
@@ -267,7 +267,7 @@ EOF
     run bash -c "source '${CONFIG_SH}'; config::load '${broken}'; config::validate"
     [ "${status}" -eq 2 ]
     [[ "${output}" == *"linear.workflow_state_uuids.merged: missing"* ]]
-    [[ "${output}" == *"speckit-linear-seed"* ]]
+    [[ "${output}" == *"spec-kit-linear-seed"* ]]
 }
 
 @test "config::validate flags a missing schema_version" {

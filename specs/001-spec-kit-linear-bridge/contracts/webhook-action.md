@@ -1,4 +1,4 @@
-# GitHub Action Contract (`speckit-linear-sync.yml`)
+# GitHub Action Contract (`spec-kit-linear-sync.yml`)
 
 **Status**: Phase 1 contract. Documents the input/output surface
 of the Layer E webhook (per Principle III, layered idempotency).
@@ -47,7 +47,7 @@ jobs:
 
 This drops close events where the PR was abandoned (merged
 false). Drop-closed PRs intentionally leave Linear at its
-last-known state; the operator can manually flip via `/speckit-linear-push`
+last-known state; the operator can manually flip via `/spec-kit-linear-push`
 from any worktree if they want to mark the spec cancelled — that
 gesture is Layer D's responsibility, not the Action's.
 
@@ -123,7 +123,7 @@ steps:
 ```bash
 # 1. Visit Linear API settings:
 #    https://linear.app/settings/api
-#    Create new personal API key, suggested name: speckit-linear-sync
+#    Create new personal API key, suggested name: spec-kit-linear-sync
 #    Copy the token (starts with `lin_api_`).
 
 # 2. Decide token scope:
@@ -276,7 +276,7 @@ the GitHub Actions log conventions: `::error::`, `::warning::`):
 | Branch not a spec branch | `Branch '<head-ref>' is not a spec-kit feature branch. Skipping.` |
 | Config missing | `::error::.specify/extensions/linear/linear-config.yml missing` |
 | Token missing | `::error::LINEAR_API_TOKEN missing. Run: gh secret set LINEAR_API_TOKEN -R <owner>/<repo>` |
-| State UUID missing | `::error::State <key> UUID missing in config — run /speckit-linear-seed` |
+| State UUID missing | `::error::State <key> UUID missing in config — run /spec-kit-linear-seed` |
 | GraphQL failure | `::error::issueUpdate failed: <response-body>` |
 
 No annotations on PRs, no PR comments, no labels touched on the
@@ -303,10 +303,10 @@ PR or the GitHub Issue surface. Per Principle III.
 | `LINEAR_API_TOKEN` missing | Step exits 1 with `gh secret set` hint | Red check on PR; error in Actions log | Set the secret + re-run job; Layer D fills gap until then (FR-030) |
 | Token expired / revoked (401) | `curl` non-zero, step exits 1 | Red check; "401 Unauthorized" in log | Rotate token in Linear, update secret via `gh secret set`, re-run job |
 | `linear-config.yml` missing on the checked-out commit | Step exits 1 with config path in error | Red check; "$CFG missing" in log | Re-run `speckit.linear.install` locally, commit `linear-config.yml`, re-trigger PR event |
-| `linear.workflow_state_uuids.<key>` missing or zero | Step exits 1, points at `/speckit-linear-seed` | Red check; "State <key> UUID missing" in log | Run seed locally, commit updated config, re-trigger |
+| `linear.workflow_state_uuids.<key>` missing or zero | Step exits 1, points at `/spec-kit-linear-seed` | Red check; "State <key> UUID missing" in log | Run seed locally, commit updated config, re-trigger |
 | No Issue matches `speckit-spec:NNN` | `::warning::`, exits 0 cleanly | Green check with warning annotation | Layer D will create the Issue on next `push`; subsequent PR events will flip it correctly |
 | Multiple Issues match (race) | Most-recent `updatedAt` wins, `::warning::`, exits 0 | Green check with warning | Layer D archives extras per FR-004b on next `push` |
-| Target state UUID points at deleted state | Step exits 1 with "STATE_NOT_FOUND" Linear error | Red check; GraphQL error body in log | Run `/speckit-linear-seed --force` to recreate (rare); operator must update config |
+| Target state UUID points at deleted state | Step exits 1 with "STATE_NOT_FOUND" Linear error | Red check; GraphQL error body in log | Run `/spec-kit-linear-seed --force` to recreate (rare); operator must update config |
 | Linear 5xx / network failure | Step exits 1 | Red check; raw GraphQL response in log | Re-run job manually OR wait for next Layer D `push` — both converge per FR-030 |
 | Branch doesn't match `<NNN>-…` | Skip cleanly, exit 0 | Green check with "Skipping" note | None — expected for non-spec PRs (chore branches etc.) |
 | GitHub Actions disabled on repo (org policy) | Workflow never fires | No checks appear on PRs | Layer D handles merged detection via `gh`/git fallback per FR-013; bridge degrades gracefully (no broken state) |
@@ -379,7 +379,7 @@ never a correctness dependency.
 ## 8. Reference YAML
 
 The reference implementation lives at
-`/Users/ashbrener/Code/AI/speckit-linear/validation/github-action-mechanics.md`
+`/Users/ashbrener/Code/AI/spec-kit-linear/validation/github-action-mechanics.md`
 §1. The shipped `templates/github-action.yml` MUST:
 
 1. Match the reference YAML's overall structure (`on:`,
@@ -396,7 +396,7 @@ The reference implementation lives at
 
 A future revision MAY add:
 
-- `concurrency: { group: speckit-linear-${{ github.event.pull_request.number }}, cancel-in-progress: false }`
+- `concurrency: { group: spec-kit-linear-${{ github.event.pull_request.number }}, cancel-in-progress: false }`
   per action mechanics §4 Open Question 4. The v1 reference YAML
   omits this block; T077 dogfood records whether an
   `opened → ready_for_review` race ever fires the Action twice

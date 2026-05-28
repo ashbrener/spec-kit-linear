@@ -46,7 +46,7 @@ Three stock labels, no parents, no label groups. **Zero** match the bridge's con
 
 `projects(first: 50)` returned an empty array. **No Linear Projects exist in this workspace at all.**
 
-Implication: there is no pre-existing `speckit-linear`, `wingman`, or `b9-backend` Project to attach to. Every consumer repo (starting with this one) needs the bridge to either create a fresh Project on first sync or use a clearly named pre-existing one. Since none exist, **create-on-first-sync** is the only viable path right now.
+Implication: there is no pre-existing `spec-kit-linear`, `wingman`, or `b9-backend` Project to attach to. Every consumer repo (starting with this one) needs the bridge to either create a fresh Project on first sync or use a clearly named pre-existing one. Since none exist, **create-on-first-sync** is the only viable path right now.
 
 ## Concrete recommendations
 
@@ -61,7 +61,7 @@ Implication: there is no pre-existing `speckit-linear`, `wingman`, or `b9-backen
    - Parent group `task-phase` (children minted per-spec-phase at sync time).
    - Leave Feature/Improvement/Bug alone.
 
-4. **Project attachment**: no existing Project to reuse. The bridge's first sync for the `speckit-linear` repo should **create** a new Linear Project named e.g. `speckit-linear` and store its UUID in `.specify/extensions/linear/config.yml` (or a sibling `.specify/extensions/linear/.state.yml`) so subsequent syncs target it. Same pattern for every future consumer repo.
+4. **Project attachment**: no existing Project to reuse. The bridge's first sync for the `spec-kit-linear` repo should **create** a new Linear Project named e.g. `spec-kit-linear` and store its UUID in `.specify/extensions/linear/config.yml` (or a sibling `.specify/extensions/linear/.state.yml`) so subsequent syncs target it. Same pattern for every future consumer repo.
 
 5. **Idempotency note for the seed implementer**: before creating each state/label, query existing ones by `name` on the team and skip on hit. The seed will be re-run by other operators against workspaces that may already have a partial setup.
 

@@ -1,7 +1,7 @@
 # Extension Manifest Contract (`extension.yml`)
 
 **Status**: Phase 1 contract. Documents every field in
-`/Users/ashbrener/Code/AI/speckit-linear/extension.yml` and the
+`/Users/ashbrener/Code/AI/spec-kit-linear/extension.yml` and the
 spec-kit CLI behaviour each field controls. Companion to the live
 manifest; both files MUST stay in lockstep.
 
@@ -51,7 +51,7 @@ extension:
 
 ```yaml
 extension:
-  name: "speckit-linear"
+  name: "spec-kit-linear"
 ```
 
 - **CLI behaviour**: Display string surfaced in
@@ -142,15 +142,15 @@ provides:
   `speckit.<extension.id>.<sub>` (extensions.py:182+). The CLI
   auto-corrects bare `speckit.foo` or `<id>.foo` to the canonical
   form but **rejects** any other shape (e.g. `linear-push`,
-  `speckit-linear.push`, `speckit.linear-push`). The bridge spells
+  `spec-kit-linear.push`, `speckit.linear-push`). The bridge spells
   every name in the full three-dot form so nothing depends on
   auto-correction.
 - **Skill auto-generation**: When the consumer ran
   `specify init --ai-skills`, extensions.py:836
   `_register_extension_skills()` writes one SKILL.md per command
-  at `.claude/skills/speckit-linear-<sub>/SKILL.md`. The dot-name
+  at `.claude/skills/spec-kit-linear-<sub>/SKILL.md`. The dot-name
   (`speckit.linear.push`) becomes the slash-command form
-  (`/speckit-linear-push`) by replacing dots with dashes.
+  (`/spec-kit-linear-push`) by replacing dots with dashes.
 - **Hook dispatch**: speckit-taskstoissues's Pre/Post-Execution
   blocks (`validation/extension-shape-recon.md` §2) translate
   dot-name → slash-name when firing `EXECUTE_COMMAND` directives.
