@@ -1,12 +1,12 @@
 # Dogfood report: spec-kit-linear -> OSH-INFRA (T077)
 
-**Run**: 2026-05-28T11:55:13Z
+**Run**: 2026-05-28T12:25:27Z
 **Operator**: ash@starlogik.com <ash@starlogik.com>
 **Workspace**: OSH-INFRA
 **Team UUID**: 6ab43461-6d22-4f02-bb1e-0be9859c7997
 **Repo**: ashbrener/spec-kit-linear
 **Branch**: 001-spec-kit-linear-bridge
-**Bridge commit**: 1d04419
+**Bridge commit**: ea7689d
 **Flags**: dry-run=0 skip-install=1 skip-seed=1
 
 ## Overview
@@ -46,6 +46,9 @@ Command: `bash src/reconcile.sh --spec 001`
 ```text
 spec-kit-linear: config loaded from .specify/extensions/linear/linear-config.yml
 spec-kit-linear: spec 001: lifecycle=implementing branch=001-spec-kit-linear-bridge
+spec-kit-linear: FR-036: running agent resolved → family='claude' model='claude-opus-4-7'
+spec-kit-linear: FR-036: running agent resolved → family='claude' model='claude-opus-4-7'
+spec-kit-linear: FR-036: running agent resolved → family='claude' model='claude-opus-4-7'
 spec-kit-linear: clarify-session 2026-05-27 comment in sync
 spec-kit-linear: clarify-session 2026-05-28 comment in sync
 spec-kit-linear: spec 001: reconcile complete
@@ -57,7 +60,7 @@ Skipped: 0   Warned: 0     Errors: 0
 ==================================
 ```
 
-**Outcome**: PASS (exit 0) — duration 19s
+**Outcome**: PASS (exit 0) — duration 28s
 
 ## Step 4 — Linear verification
 
@@ -67,17 +70,17 @@ Skipped: 0   Warned: 0     Errors: 0
 | Issue with label `speckit-spec:001` exists | PASS | OSH-5 |
 | Issue title | PASS | 001-spec-kit-linear-bridge |
 | Issue workflow state | PASS | Implementing (started) |
-| Issue labels | PASS | speckit-spec:001, phase:implementing |
+| Issue labels | PASS | agent:claude, phase:implementing, speckit-spec:001 |
 
 ## Summary
 
 | Field | Value |
 |---|---|
 | Overall | PASS |
-| Total wall-clock | 21s |
+| Total wall-clock | 31s |
 | Step 1 (install) | exit 0 in 0s |
 | Step 2 (seed) | exit 0 in 0s |
-| Step 3 (reconcile) | exit 0 in 19s |
+| Step 3 (reconcile) | exit 0 in 28s |
 | Step 4 (Linear verify) | project=ok issue=ok |
 | Linear spec Issue | <https://linear.app/osh-infra/issue/OSH-5/001-spec-kit-linear-bridge> |
 
