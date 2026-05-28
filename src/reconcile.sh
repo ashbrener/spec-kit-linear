@@ -763,24 +763,85 @@ EOF
 }
 
 # =============================================================================
+# reconcile::_strip_fence <body> <begin_marker> <end_marker>
+#
+# Remove the first fence-pair (begin..end, inclusive) from <body>.
+# Returns the body with the fence excised and any resulting triple
+# newline run collapsed to a double. If only the begin marker is
+# present (malformed fence), returns the body unchanged so we never
+# eat the rest of the description.
+#
+# BSD-awk safe — pure bash state machine, no awk -v block=multi-line.
+# =============================================================================
+reconcile::_strip_fence() {
+    local body="$1"
+    local begin="$2"
+    local end="$3"
+
+    if ! printf '%s' "$body" | grep -qF "$begin" \
+        || ! printf '%s' "$body" | grep -qF "$end"; then
+        printf '%s' "$body"
+        return 0
+    fi
+
+    local out="" line skip=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$skip" -eq 0 && "$line" == *"$begin"* ]]; then
+            skip=1
+            continue
+        fi
+        if [[ "$skip" -eq 1 ]]; then
+            if [[ "$line" == *"$end"* ]]; then
+                skip=0
+            fi
+            continue
+        fi
+        out+="${line}"$'\n'
+    done <<< "$body"
+
+    # Drop leading blank lines left behind when the fence was at the top
+    while [[ "$out" == $'\n'* ]]; do
+        out="${out#$'\n'}"
+    done
+    # Collapse triple-newline runs created when a fence sat between two
+    # blank-line-separated paragraphs.
+    while [[ "$out" == *$'\n\n\n'* ]]; do
+        out="${out//$'\n\n\n'/$'\n\n'}"
+    done
+    # Trim trailing newlines so the caller can concatenate cleanly.
+    while [[ "$out" == *$'\n' ]]; do
+        out="${out%$'\n'}"
+    done
+
+    printf '%s' "$out"
+}
+
+# =============================================================================
 # reconcile::compose_issue_description <body_text> <memory_block> [<diagrams_block>] [<overview_block>]
 #
-# Merge the bridge's overview + memory + diagrams blocks into the spec
-# Issue's description. Strategy: for each fence family, if both markers
-# exist in <body_text>, splice between them; otherwise insert a fresh
-# fenced block in the canonical position. Operator-added prose outside
-# the fences is preserved verbatim (FR-004).
+# Rebuild the spec Issue description from scratch in canonical order:
 #
-# Canonical order (top → bottom of the rendered description):
-#   1. overview  (<!-- spec-kit-linear:overview:* -->)  — Fix 7
-#   2. memory    (<!-- spec-kit-linear:memory:*   -->)  — FR-004
-#   3. diagrams  (<!-- spec-kit-linear:diagrams:* -->)  — Fix 2
+#   overview → memory → diagrams → operator-around-fences remainder
 #
-# <diagrams_block> may be empty — when the consumer repo isn't on
-# GitHub, render_diagrams_block returns no content and we omit the
-# diagrams fence entirely. <overview_block> may be empty — when
-# spec.md has no `## Overview` heading, render_overview_block returns
-# no content and we omit the overview fence entirely.
+# Strategy (Plan B / canonical rebuild — Principle II at the description
+# layer): strip every bridge-owned fence pair out of <body_text>, keep
+# whatever the operator wrote outside the fences as `body_remainder`,
+# then concatenate the freshly-rendered fenced blocks in canonical
+# order and append the remainder. The bridge fully reconstructs its
+# blocks every reconcile — no per-fence splice paths, no "replace vs
+# prepend vs insert-after" branches whose ordering depends on the
+# current state of the description.
+#
+# <overview_block> and <diagrams_block> may be empty:
+#   - empty overview → no `## Overview` heading in spec.md
+#   - empty diagrams → consumer repo isn't on GitHub
+# In both cases we omit the fenced block entirely (graceful
+# degradation). The memory block is mandatory.
+#
+# Trade-off (documented): operator prose written INSIDE any bridge
+# fence is overwritten on every reconcile. Operator annotations belong
+# in Linear comments (which the bridge never touches) or outside the
+# fences in the description body.
 # =============================================================================
 reconcile::compose_issue_description() {
     local body="$1"
@@ -788,145 +849,53 @@ reconcile::compose_issue_description() {
     local diagrams_block="${3:-}"
     local overview_block="${4:-}"
 
-    # The full memory block we want to emit, fences included.
-    local memory_fenced
+    # Build the three fenced blocks. Memory is mandatory; overview and
+    # diagrams are skipped when their content is empty.
+    local memory_fenced overview_fenced="" diagrams_fenced=""
     memory_fenced=$(printf '%s\n%s\n%s' \
         "${RECONCILE_MEMORY_BEGIN}" \
         "${memory_block}" \
         "${RECONCILE_MEMORY_END}")
-
-    local result="$body"
-
-    # ---- memory block splice ------------------------------------------
-    # BSD-awk safe: walks $result line by line, replaces everything
-    # between the fence markers with the new fenced block. Cannot use
-    # `awk -v block=...` because BSD awk on macOS rejects multi-line -v
-    # values, silently emptying the output and deleting the block.
-    if printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_BEGIN}" \
-        && printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_END}"; then
-        local _mem_out _mem_line _mem_skip=0 _mem_printed=0
-        _mem_out=""
-        while IFS= read -r _mem_line || [[ -n "$_mem_line" ]]; do
-            if [[ "$_mem_skip" -eq 0 && "$_mem_line" == *"${RECONCILE_MEMORY_BEGIN}"* ]]; then
-                _mem_skip=1
-                if [[ "$_mem_printed" -eq 0 ]]; then
-                    _mem_out+="${memory_fenced}"$'\n'
-                    _mem_printed=1
-                fi
-                continue
-            fi
-            if [[ "$_mem_skip" -eq 1 ]]; then
-                if [[ "$_mem_line" == *"${RECONCILE_MEMORY_END}"* ]]; then
-                    _mem_skip=0
-                fi
-                continue
-            fi
-            _mem_out+="${_mem_line}"$'\n'
-        done <<< "$result"
-        result="${_mem_out%$'\n'}"
-    else
-        # No fences yet — prepend.
-        result="$(printf '%s\n\n%s' "$memory_fenced" "$result")"
-    fi
-
-    # ---- overview block splice (optional) -----------------------------
-    # Lands at the TOP of the description so a developer scanning the
-    # Linear Issue sees the plain-English summary BEFORE the memory
-    # metadata table. If an overview fence already exists, rewrite it
-    # in place; otherwise prepend a fresh fenced block to the head.
     if [[ -n "$overview_block" ]]; then
-        local overview_fenced
         overview_fenced=$(printf '%s\n%s\n%s' \
             "${RECONCILE_OVERVIEW_BEGIN}" \
             "${overview_block}" \
             "${RECONCILE_OVERVIEW_END}")
-
-        if printf '%s' "$result" | grep -qF "${RECONCILE_OVERVIEW_BEGIN}" \
-            && printf '%s' "$result" | grep -qF "${RECONCILE_OVERVIEW_END}"; then
-            # BSD-awk safe: bash state machine instead of awk -v block=...
-            local _ov_out _ov_line _ov_skip=0 _ov_printed=0
-            _ov_out=""
-            while IFS= read -r _ov_line || [[ -n "$_ov_line" ]]; do
-                if [[ "$_ov_skip" -eq 0 && "$_ov_line" == *"${RECONCILE_OVERVIEW_BEGIN}"* ]]; then
-                    _ov_skip=1
-                    if [[ "$_ov_printed" -eq 0 ]]; then
-                        _ov_out+="${overview_fenced}"$'\n'
-                        _ov_printed=1
-                    fi
-                    continue
-                fi
-                if [[ "$_ov_skip" -eq 1 ]]; then
-                    if [[ "$_ov_line" == *"${RECONCILE_OVERVIEW_END}"* ]]; then
-                        _ov_skip=0
-                    fi
-                    continue
-                fi
-                _ov_out+="${_ov_line}"$'\n'
-            done <<< "$result"
-            result="${_ov_out%$'\n'}"
-        else
-            # No overview fence yet — prepend at the very top so the
-            # canonical order is overview → memory → diagrams.
-            result="$(printf '%s\n\n%s' "$overview_fenced" "$result")"
-        fi
     fi
-
-    # ---- diagrams block splice (optional) -----------------------------
     if [[ -n "$diagrams_block" ]]; then
-        local diagrams_fenced
         diagrams_fenced=$(printf '%s\n%s\n%s' \
             "${RECONCILE_DIAGRAMS_BEGIN}" \
             "${diagrams_block}" \
             "${RECONCILE_DIAGRAMS_END}")
-
-        if printf '%s' "$result" | grep -qF "${RECONCILE_DIAGRAMS_BEGIN}" \
-            && printf '%s' "$result" | grep -qF "${RECONCILE_DIAGRAMS_END}"; then
-            # BSD-awk safe: bash state machine instead of awk -v block=...
-            local _dg_out _dg_line _dg_skip=0 _dg_printed=0
-            _dg_out=""
-            while IFS= read -r _dg_line || [[ -n "$_dg_line" ]]; do
-                if [[ "$_dg_skip" -eq 0 && "$_dg_line" == *"${RECONCILE_DIAGRAMS_BEGIN}"* ]]; then
-                    _dg_skip=1
-                    if [[ "$_dg_printed" -eq 0 ]]; then
-                        _dg_out+="${diagrams_fenced}"$'\n'
-                        _dg_printed=1
-                    fi
-                    continue
-                fi
-                if [[ "$_dg_skip" -eq 1 ]]; then
-                    if [[ "$_dg_line" == *"${RECONCILE_DIAGRAMS_END}"* ]]; then
-                        _dg_skip=0
-                    fi
-                    continue
-                fi
-                _dg_out+="${_dg_line}"$'\n'
-            done <<< "$result"
-            result="${_dg_out%$'\n'}"
-        else
-            # Append the diagrams block AFTER the memory block / body
-            # so the reader sees: memory fence → operator prose →
-            # diagrams pointer. Inserting after the memory end fence
-            # keeps the visual order stable across re-runs.
-            if printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_END}"; then
-                # BSD-awk safe: bash state machine instead of awk -v block=...
-                local _ia_out _ia_line _ia_inserted=0
-                _ia_out=""
-                while IFS= read -r _ia_line || [[ -n "$_ia_line" ]]; do
-                    _ia_out+="${_ia_line}"$'\n'
-                    if [[ "$_ia_inserted" -eq 0 && "$_ia_line" == *"${RECONCILE_MEMORY_END}"* ]]; then
-                        _ia_out+=$'\n'"${diagrams_fenced}"$'\n'
-                        _ia_inserted=1
-                    fi
-                done <<< "$result"
-                if [[ "$_ia_inserted" -eq 0 ]]; then
-                    _ia_out+=$'\n'"${diagrams_fenced}"$'\n'
-                fi
-                result="${_ia_out%$'\n'}"
-            else
-                result="$(printf '%s\n\n%s' "$result" "$diagrams_fenced")"
-            fi
-        fi
     fi
+
+    # Strip every bridge-owned fence pair from the body — whatever is
+    # left is operator-around-fences content that we preserve verbatim.
+    local body_remainder="$body"
+    body_remainder=$(reconcile::_strip_fence "$body_remainder" \
+        "${RECONCILE_OVERVIEW_BEGIN}" "${RECONCILE_OVERVIEW_END}")
+    body_remainder=$(reconcile::_strip_fence "$body_remainder" \
+        "${RECONCILE_MEMORY_BEGIN}"   "${RECONCILE_MEMORY_END}")
+    body_remainder=$(reconcile::_strip_fence "$body_remainder" \
+        "${RECONCILE_DIAGRAMS_BEGIN}" "${RECONCILE_DIAGRAMS_END}")
+
+    # Assemble in canonical order. Empty blocks are skipped.
+    local result=""
+    if [[ -n "$overview_fenced" ]]; then
+        result+="${overview_fenced}"$'\n\n'
+    fi
+    result+="${memory_fenced}"
+    if [[ -n "$diagrams_fenced" ]]; then
+        result+=$'\n\n'"${diagrams_fenced}"
+    fi
+    if [[ -n "$body_remainder" ]]; then
+        result+=$'\n\n'"${body_remainder}"
+    fi
+
+    # Trim trailing newlines for clean concatenation downstream.
+    while [[ "$result" == *$'\n' ]]; do
+        result="${result%$'\n'}"
+    done
 
     printf '%s' "$result"
 }
