@@ -1476,9 +1476,22 @@ reconcile::sync_spec_issue() {
     # marker — that case is "operator declined to estimate", not
     # "estimated as zero", so we omit estimate from the mutation
     # entirely and let an operator-set Linear value (if any) stick.
+    #
+    # Linear caps the estimate value per the team's estimation scale
+    # (defaults observed: Exponential 1..64, Fibonacci 1..21). If the
+    # computed rollup exceeds the cap we'd get a hard GraphQL
+    # validation error. Graceful degradation: warn once, omit the
+    # estimate from this mutation, let the operator's Linear-side
+    # value (if any) stick. Cap overridable via env var so teams on
+    # non-default scales can set their own.
     local tasks_md spec_estimate
     tasks_md="${spec_dir%/}/tasks.md"
     spec_estimate="$(parser::spec_estimate "$tasks_md" 2>/dev/null || true)"
+    if [[ -n "$spec_estimate" ]] \
+        && (( spec_estimate > ${SPECKIT_LINEAR_ESTIMATE_MAX:-64} )); then
+        summary::add warned "spec ${feature_number}: rollup estimate ${spec_estimate} exceeds Linear cap ${SPECKIT_LINEAR_ESTIMATE_MAX:-64}; omitting (set SPECKIT_LINEAR_ESTIMATE_MAX to override)"
+        spec_estimate=""
+    fi
 
     # Compose the overview + memory + diagrams blocks into a final body.
     local memory_block diagrams_block overview_block
@@ -1711,8 +1724,15 @@ reconcile::sync_task_phase_subissues() {
         checklist="$(reconcile::compose_subissue_checklist \
             "$feature_number" "$phase_index" "$tasks_md")"
         # FR-035: per-phase rollup of [N] markers → Linear sub-issue
-        # estimate. Empty when this phase has no marked tasks.
+        # estimate. Empty when this phase has no marked tasks. Same
+        # Linear-cap clamp as the spec-level rollup (see sync_spec_issue)
+        # — Linear validates estimate ≤ team cap and hard-errors above it.
         phase_estimate="$(parser::phase_estimate "$tasks_md" "$phase_index" 2>/dev/null || true)"
+        if [[ -n "$phase_estimate" ]] \
+            && (( phase_estimate > ${SPECKIT_LINEAR_ESTIMATE_MAX:-64} )); then
+            summary::add warned "spec ${feature_number} phase ${phase_index}: rollup estimate ${phase_estimate} exceeds Linear cap ${SPECKIT_LINEAR_ESTIMATE_MAX:-64}; omitting"
+            phase_estimate=""
+        fi
         local state_key state_uuid
         state_key="$(reconcile::subissue_state_key "$tasks_md" "$phase_index")"
         # `default_state_uuids` is added during the post-analyze

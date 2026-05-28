@@ -1,12 +1,12 @@
 # Dogfood report: spec-kit-linear -> OSH-INFRA (T077)
 
-**Run**: 2026-05-28T10:09:01Z
+**Run**: 2026-05-28T11:55:13Z
 **Operator**: ash@starlogik.com <ash@starlogik.com>
 **Workspace**: OSH-INFRA
 **Team UUID**: 6ab43461-6d22-4f02-bb1e-0be9859c7997
 **Repo**: ashbrener/spec-kit-linear
 **Branch**: 001-spec-kit-linear-bridge
-**Bridge commit**: a7a7dea
+**Bridge commit**: 1d04419
 **Flags**: dry-run=0 skip-install=1 skip-seed=1
 
 ## Overview
@@ -57,7 +57,7 @@ Skipped: 0   Warned: 0     Errors: 0
 ==================================
 ```
 
-**Outcome**: PASS (exit 0) — duration 16s
+**Outcome**: PASS (exit 0) — duration 19s
 
 ## Step 4 — Linear verification
 
@@ -74,10 +74,10 @@ Skipped: 0   Warned: 0     Errors: 0
 | Field | Value |
 |---|---|
 | Overall | PASS |
-| Total wall-clock | 18s |
+| Total wall-clock | 21s |
 | Step 1 (install) | exit 0 in 0s |
 | Step 2 (seed) | exit 0 in 0s |
-| Step 3 (reconcile) | exit 0 in 16s |
+| Step 3 (reconcile) | exit 0 in 19s |
 | Step 4 (Linear verify) | project=ok issue=ok |
 | Linear spec Issue | <https://linear.app/osh-infra/issue/OSH-5/001-spec-kit-linear-bridge> |
 
