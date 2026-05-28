@@ -24,7 +24,7 @@ The extension turns each spec into a real Linear Issue with phase, branch, workt
 ## How it works
 
 ```mermaid
-graph LR
+graph TD
     subgraph FS["📁 Your repo"]
         SpecDir["specs/NNN-feature/<br/>spec.md · plan.md · tasks.md"]
     end
