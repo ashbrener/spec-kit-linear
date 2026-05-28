@@ -2,7 +2,7 @@
 
 > A spec-kit extension that mirrors every spec on disk into Linear, so you can see — and steer — every active spec across every repo from a single Linear view.
 
-![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Status: spec complete · plan in progress](https://img.shields.io/badge/status-spec%20complete%20%C2%B7%20plan%20in%20progress-orange.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Status: MVP shipped (manual sync via speckit.linear.push) · auto-fire + install ceremony in progress](https://img.shields.io/badge/status-MVP%20shipped%20(manual%20sync%20via%20speckit.linear.push)%20%C2%B7%20auto--fire%20%2B%20install%20ceremony%20in%20progress-brightgreen.svg)
 
 ---
 
@@ -19,6 +19,33 @@ The artifacts are right there in markdown. There's just no single pane where you
 Linear becomes the consolidated memory layer. The filesystem stays the single source of truth — every spec, every clarify round, every task list is still a markdown file in `specs/NNN-feature/` — but `speckit-linear` reads that state and pushes it into Linear so each spec is a real Linear Issue with phase, branch, worktree, and current task visible at a glance.
 
 The bridge is **reconcile-based**: every `/speckit-*` command fires a hook that reads the spec directory and pushes whatever Linear needs to match. Linear is the mirror. The filesystem wins every conflict. Reverse sync (Linear → disk) is explicitly out of scope.
+
+## Current capabilities (v0.1.0-mvp)
+
+The MVP slice (Phases 1–3, T001–T034 of [`specs/001-spec-kit-linear-bridge/tasks.md`](./specs/001-spec-kit-linear-bridge/tasks.md)) is shipped on the `001-spec-kit-linear-bridge` branch with CI green. Today the bridge can:
+
+- **On-demand reconcile** via `speckit.linear.push` — manually invoked by an AI agent (no auto-firing yet).
+- **Filesystem → Linear sync** of spec Issues, task-phase sub-issues, checklist mirrors, blocking relations between sub-issues, the structured memory block in each spec Issue's description, and clarify-session comments.
+- **Idempotent** — re-running on unchanged state produces zero churn (no mutated timestamps, no new comments, no label re-application).
+- **Write-authority gate** — only the worktree on a spec's feature branch may write to that spec's Linear Issue; sync from any other worktree is read-only for that spec (FR-025 / FR-026).
+- **Direct Linear GraphQL** — the manual reconcile path requires no MCP runtime; an `LINEAR_API_KEY` in `.env` is sufficient.
+
+The operator must currently set up `.specify/extensions/linear/linear-config.yml` by hand (Project/Team UUIDs + workflow state UUIDs) and manually run a `seed` step against the Linear workspace before the first push. The one-shot install ceremony that automates all of that is in `## Coming next`.
+
+## Coming next
+
+Phases 4–8 of [`specs/001-spec-kit-linear-bridge/tasks.md`](./specs/001-spec-kit-linear-bridge/tasks.md) still to ship:
+
+- **One-shot install ceremony** — `specify extension add linear` with a smart Project/Team picker, automatic hook registration in `.specify/extensions.yml`, and full dependency verification per FR-018b.
+- **Auto-fire on every `/speckit-*` lifecycle command** — `after_specify`, `after_clarify`, `after_plan`, `after_tasks`, `after_implement`, `after_analyze` hooks call the reconciler so Linear stays in sync without a manual step.
+- **Local git hooks** — `post-checkout`, `post-commit`, `post-merge` for branch-switch awareness across worktrees.
+- **Layer E GitHub Action webhook** — real-time PR-merge updates (`Ready-to-merge` → `Merged` within ~10s).
+- **Workspace seed automation** — `speckit.linear.seed` creates the nine lifecycle workflow states + `phase:*` / `task-phase:*` labels and writes the resolved UUIDs back into `linear-config.yml`.
+- **Cross-repo unified view commands** — `speckit.linear.pull` (read-only inspect) and `speckit.linear.status` (drift report).
+- **Retroactive sync** of already-merged specs — jump straight to `Merged` without intermediate phase transitions cluttering Linear's activity log (FR-014).
+- **Dogfood** — the bridge syncs its own spec 001 into the OSH-INFRA workspace.
+
+Full task-by-task breakdown: [`specs/001-spec-kit-linear-bridge/tasks.md`](./specs/001-spec-kit-linear-bridge/tasks.md).
 
 ## Data model
 
@@ -149,9 +176,18 @@ If Layer E isn't installed, Layer D still converges to `Merged` on the next sync
 
 ## Status
 
-`v0.0.0-dev`. **Spec is locked; plan and tasks are not.**
+`v0.1.0-mvp`. **Spec, plan, and tasks all locked; MVP shipped.**
 
-This repo is currently in the spec-kit lifecycle for its own first release at `specs/001-spec-kit-linear-bridge/`. Install instructions, the CLI reference, and the seed workflow will land here once `/speckit-plan` and `/speckit-tasks` settle the implementation shape — we won't fabricate commands that don't exist yet.
+- Spec complete ✓
+- Plan complete ✓
+- Tasks complete ✓
+- **Phase 1** (Setup) ✓
+- **Phase 2** (Foundational — 5 bash modules + 102 unit tests + 5 fixtures) ✓
+- **Phase 3** (US1 — MVP reconciler + integration tests) ✓
+- **Phases 4–8** in progress (see [Coming next](#coming-next))
+- **CI**: green on `001-spec-kit-linear-bridge` ([latest run](https://github.com/ashbrener/speckit-linear/actions?query=branch%3A001-spec-kit-linear-bridge))
+
+This repo is in the spec-kit lifecycle for its own first release at `specs/001-spec-kit-linear-bridge/`. The full install ceremony, the CLI reference for the auto-firing path, and the seed workflow land in Phases 4–8.
 
 In the meantime:
 
