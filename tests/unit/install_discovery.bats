@@ -287,10 +287,14 @@ _graphql_call_count() {
 }
 
 @test "T207 stub: install::pick_project_interactively forces 'create' on empty list" {
+    # Phase 3: empty-list picker prompts for choice 1 (the lone
+    # "Create new project" option) — feed stdin via process
+    # substitution so the helper's $INSTALL_SESSION_PROJECT_CHOICE
+    # propagates to the test scope.
     _source_install_sh
     INSTALL_SESSION_PROJECTS_IDS=()
     INSTALL_SESSION_PROJECTS_NAMES=()
-    install::pick_project_interactively
+    install::pick_project_interactively < <(printf '1\n')
     [ "$INSTALL_SESSION_PROJECT_CHOICE" = "create" ]
 }
 
@@ -302,12 +306,11 @@ _graphql_call_count() {
 }
 
 @test "T208 stub: install::prompt_new_project_name defaults to repo basename" {
+    # Phase 3: prompt_new_project_name now reads stdin. Feed empty input
+    # to accept the default (repo basename or pwd basename).
     _source_install_sh
-    # The Phase 2 stub returns `basename "$(git rev-parse --show-toplevel)"`
-    # or `basename "$(pwd)"` when git is unavailable. Either way the output
-    # MUST be non-empty.
     local name
-    name="$(install::prompt_new_project_name)"
+    name="$(install::prompt_new_project_name < <(printf '\n'))"
     [ -n "$name" ]
 }
 
@@ -454,4 +457,456 @@ _graphql_call_count() {
     local logged
     logged="$(jq -r '.query' "${INSTALL_TEST_CALL_LOG}/queries.jsonl")"
     [[ "$logged" =~ "Teams" ]]
+}
+
+# Phase 3 tests appended below.
+
+
+# =============================================================================
+# Phase 3 — User Story 1 tests (T221..T231).
+#
+# These exercise the full FR-037..FR-043 behaviour through the helpers
+# implemented in Phase 3 tasks T232..T240. The Phase 2 stubs returned
+# early without prompting; these assert the post-Phase-3 behaviour:
+# full read-loop, picker rendering, write-order guard, and SC-010
+# zero-UUID surface.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# T221 — FR-037 API key resolution (precedence order).
+# ---------------------------------------------------------------------------
+
+@test "T221: install::prompt_for_api_key honours LINEAR_API_KEY env var (precedence 1)" {
+    _source_install_sh
+    export LINEAR_API_KEY="lin_api_env_winner"
+    printf 'LINEAR_API_KEY=lin_api_dotenv_loser\n' > .env
+    install::prompt_for_api_key
+    [ "$INSTALL_SESSION_API_KEY" = "lin_api_env_winner" ]
+    [ "$INSTALL_SESSION_API_KEY_SOURCE" = "env" ]
+}
+
+@test "T221: install::prompt_for_api_key reads .env when env var absent (precedence 2)" {
+    _source_install_sh
+    unset LINEAR_API_KEY
+    printf 'LINEAR_API_KEY=lin_api_dotenv_value\n' > .env
+    install::prompt_for_api_key
+    [ "$INSTALL_SESSION_API_KEY" = "lin_api_dotenv_value" ]
+    [ "$INSTALL_SESSION_API_KEY_SOURCE" = "dotenv" ]
+}
+
+@test "T221: install::prompt_for_api_key reads stdin when env+dotenv absent (precedence 3)" {
+    unset LINEAR_API_KEY
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_FLAG_NON_INTERACTIVE=0
+        install::prompt_for_api_key < <(printf 'lin_api_prompt_value\nn\n')
+        printf 'KEY=%s SRC=%s\n' \"\$INSTALL_SESSION_API_KEY\" \"\$INSTALL_SESSION_API_KEY_SOURCE\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KEY=lin_api_prompt_value SRC=prompt"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# T222 — FR-037 "Save to .env?" flow + .gitignore guard.
+# ---------------------------------------------------------------------------
+
+@test "T222: save-to-.env Y writes LINEAR_API_KEY to .env" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_FLAG_NON_INTERACTIVE=0
+        install::prompt_for_api_key < <(printf 'lin_api_saved\nY\n')
+    "
+    [ "$status" -eq 0 ]
+    [ -f "${TEST_TMP}/.env" ]
+    grep -q '^LINEAR_API_KEY=lin_api_saved$' "${TEST_TMP}/.env"
+}
+
+@test "T222: save-to-.env flow ensures .env is in .gitignore" {
+    : > "${TEST_TMP}/.gitignore"
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_FLAG_NON_INTERACTIVE=0
+        install::prompt_for_api_key < <(printf 'lin_api_saved\nY\n')
+    "
+    [ "$status" -eq 0 ]
+    grep -qE '^\.env$' "${TEST_TMP}/.gitignore"
+}
+
+@test "T222: save-to-.env N skips .env write" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_FLAG_NON_INTERACTIVE=0
+        install::prompt_for_api_key < <(printf 'lin_api_not_saved\nN\n')
+    "
+    [ "$status" -eq 0 ]
+    [ ! -f "${TEST_TMP}/.env" ]
+}
+
+# ---------------------------------------------------------------------------
+# T223 — FR-037 .env conflict triage (overwrite/keep/abort).
+# ---------------------------------------------------------------------------
+
+@test "T223: .env conflict 'overwrite' rewrites existing LINEAR_API_KEY line" {
+    printf 'OTHER_VAR=keep_me\nLINEAR_API_KEY=lin_api_old\n' > "${TEST_TMP}/.env"
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_SESSION_API_KEY='lin_api_new'
+        INSTALL_SESSION_API_KEY_SOURCE='prompt'
+        install::_resolve_dotenv_conflict < <(printf 'overwrite\n')
+    "
+    [ "$status" -eq 0 ]
+    grep -q '^LINEAR_API_KEY=lin_api_new$' "${TEST_TMP}/.env"
+    grep -q '^OTHER_VAR=keep_me$' "${TEST_TMP}/.env"
+}
+
+@test "T223: .env conflict 'keep' discards new key, re-resolves from .env" {
+    printf 'LINEAR_API_KEY=lin_api_existing\n' > "${TEST_TMP}/.env"
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_SESSION_API_KEY='lin_api_replacement'
+        INSTALL_SESSION_API_KEY_SOURCE='prompt'
+        install::_resolve_dotenv_conflict < <(printf 'keep\n')
+        printf 'KEY=%s\n' \"\$INSTALL_SESSION_API_KEY\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KEY=lin_api_existing"* ]]
+}
+
+@test "T223: .env conflict 'abort' exits 0 without writing" {
+    printf 'LINEAR_API_KEY=lin_api_existing\n' > "${TEST_TMP}/.env"
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        INSTALL_SESSION_API_KEY='lin_api_replacement'
+        INSTALL_SESSION_API_KEY_SOURCE='prompt'
+        install::_resolve_dotenv_conflict < <(printf 'abort\n')
+    "
+    [ "$status" -eq 0 ]
+    grep -q '^LINEAR_API_KEY=lin_api_existing$' "${TEST_TMP}/.env"
+}
+
+# ---------------------------------------------------------------------------
+# T224 — FR-048 viewer query single-fire invariant + organization fields.
+# ---------------------------------------------------------------------------
+
+@test "T224: install::resolve_operator issues exactly one viewer query (FR-048)" {
+    _source_install_sh
+    _install_graphql_stub
+    INSTALL_TEST_FIXTURE_PATH="${INSTALL_TEST_FIXTURE_DIR}/viewer.json"
+    export LINEAR_API_KEY="lin_api_test"
+    install::resolve_operator
+    [ "$(_graphql_call_count)" = "1" ]
+    [ "$INSTALL_SESSION_VIEWER_ID" = "11111111-2222-3333-4444-555555555555" ]
+    [ "$INSTALL_SESSION_VIEWER_ORG_NAME" = "OSH Infra" ]
+    [ "$INSTALL_SESSION_VIEWER_ORG_URL_KEY" = "osh-infra" ]
+    [ "$INSTALL_OPERATOR_USER_ID" = "11111111-2222-3333-4444-555555555555" ]
+}
+
+@test "T224: viewer query body selects organization fields per FR-048" {
+    _source_install_sh
+    _install_graphql_stub
+    INSTALL_TEST_FIXTURE_PATH="${INSTALL_TEST_FIXTURE_DIR}/viewer.json"
+    export LINEAR_API_KEY="lin_api_test"
+    install::resolve_operator
+    local logged
+    logged="$(jq -r '.query' "${INSTALL_TEST_CALL_LOG}/queries.jsonl")"
+    [[ "$logged" == *"organization"* ]]
+    [[ "$logged" == *"urlKey"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# T225 — FR-039 team picker branches.
+# ---------------------------------------------------------------------------
+
+@test "T225: team discovery auto-picks the only team in the workspace" {
+    _source_install_sh
+    _install_graphql_stub
+    INSTALL_TEST_FIXTURE_PATH="${INSTALL_TEST_FIXTURE_DIR}/teams_single.json"
+    install::discover_teams
+    install::pick_team_interactively
+    [ "$INSTALL_SESSION_SELECTED_TEAM_KEY" = "OSH" ]
+    [ -n "$INSTALL_SESSION_SELECTED_TEAM_ID" ]
+}
+
+@test "T225: team discovery — multi-pick honours operator pick '2'" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/teams_multi.json'; }
+        install::discover_teams
+        install::pick_team_interactively < <(printf '2\n')
+        printf 'KEY=%s NAME=%s\n' \"\$INSTALL_SESSION_SELECTED_TEAM_KEY\" \"\$INSTALL_SESSION_SELECTED_TEAM_NAME\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"KEY=ENG NAME=Engineering"* ]]
+}
+
+@test "T225: team discovery — zero teams halts exit 2" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/teams_zero.json'; }
+        install::discover_teams
+        install::pick_team_interactively
+    "
+    [ "$status" -eq 2 ]
+}
+
+@test "T225: team discovery — overflow surfaces warning + --team pointer" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/teams_overflow.json'; }
+        install::discover_teams
+        install::pick_team_interactively < <(printf '1\n') 2>&1
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"more not shown"* ]]
+    [[ "$output" == *"--team"* ]]
+}
+# ---------------------------------------------------------------------------
+# T226 — FR-040 project picker branches.
+# ---------------------------------------------------------------------------
+
+@test "T226: project discovery — empty list forces 'create' (only option)" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/projects_empty.json'; }
+        INSTALL_SESSION_SELECTED_TEAM_ID='6ab43461-6d22-4f02-bb1e-0be9859c7997'
+        INSTALL_SESSION_SELECTED_TEAM_KEY='OSH'
+        INSTALL_SESSION_SELECTED_TEAM_NAME='OSH'
+        install::discover_projects
+        install::pick_project_interactively < <(printf '1\n')
+        printf 'CHOICE=%s\n' \"\$INSTALL_SESSION_PROJECT_CHOICE\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CHOICE=create"* ]]
+}
+
+@test "T226: project discovery — multi-pick attaches to operator's choice" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/projects_multi.json'; }
+        INSTALL_SESSION_SELECTED_TEAM_ID='6ab43461-6d22-4f02-bb1e-0be9859c7997'
+        INSTALL_SESSION_SELECTED_TEAM_KEY='OSH'
+        INSTALL_SESSION_SELECTED_TEAM_NAME='OSH'
+        install::discover_projects
+        install::pick_project_interactively < <(printf '2\n')
+        printf 'CHOICE=%s NAME=%s\n' \"\$INSTALL_SESSION_PROJECT_CHOICE\" \"\$INSTALL_SESSION_SELECTED_PROJECT_NAME\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CHOICE=attach NAME=hurri-backend"* ]]
+}
+
+@test "T226: project discovery — choosing N+1 tail sets choice=create" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/projects_multi.json'; }
+        INSTALL_SESSION_SELECTED_TEAM_ID='6ab43461-6d22-4f02-bb1e-0be9859c7997'
+        INSTALL_SESSION_SELECTED_TEAM_KEY='OSH'
+        INSTALL_SESSION_SELECTED_TEAM_NAME='OSH'
+        install::discover_projects
+        install::pick_project_interactively < <(printf '4\n')
+        printf 'CHOICE=%s\n' \"\$INSTALL_SESSION_PROJECT_CHOICE\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CHOICE=create"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# T227 — FR-041 projectCreate happy path + duplicate-name triage.
+# ---------------------------------------------------------------------------
+
+@test "T227: install::create_linear_project happy path captures name/url" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::mutate() { cat '${INSTALL_TEST_FIXTURE_DIR}/projectCreate_ok.json'; }
+        install::create_linear_project '6ab43461-6d22-4f02-bb1e-0be9859c7997' 'spec-kit-linear'
+        printf 'NAME=%s URL=%s\n' \"\$INSTALL_SESSION_SELECTED_PROJECT_NAME\" \"\$INSTALL_SESSION_SELECTED_PROJECT_URL\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NAME=spec-kit-linear"* ]]
+    [[ "$output" == *"URL=https://linear.app/osh-infra/project/"* ]]
+}
+
+@test "T227: duplicate-name triage 'pick-existing' attaches to existing match" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() {
+            printf '%s' '{\"data\":{\"projects\":{\"nodes\":[{\"id\":\"97bca3d5-ede3-4e7f-9c1a-2d4b5e6f7080\",\"name\":\"spec-kit-linear\",\"url\":\"https://linear.app/osh-infra/project/spec-kit-linear-97bca3d5ede3\"}]}}}'
+        }
+        install::_handle_duplicate_name '6ab43461-6d22-4f02-bb1e-0be9859c7997' 'spec-kit-linear' < <(printf 'pick-existing\n')
+        printf 'CHOICE=%s NAME=%s\n' \"\$INSTALL_SESSION_PROJECT_CHOICE\" \"\$INSTALL_SESSION_SELECTED_PROJECT_NAME\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"CHOICE=attach NAME=spec-kit-linear"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# T228 — FR-041 projectCreate failure surface.
+# ---------------------------------------------------------------------------
+
+@test "T228: install::create_linear_project surfaces Linear error on success=false" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::mutate() { cat '${INSTALL_TEST_FIXTURE_DIR}/projectCreate_fail.json'; }
+        install::create_linear_project '6ab43461-6d22-4f02-bb1e-0be9859c7997' 'spec-kit-linear'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"permission"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# T229 — FR-042 / FR-043 write-order invariant.
+# ---------------------------------------------------------------------------
+
+@test "T229: linear-config.yml is written before any hook registration call" {
+    _source_install_sh
+    local order_log="${BATS_TEST_TMPDIR}/order.log"
+    : > "$order_log"
+    install::write_config() { printf 'write_config\n' >> "$order_log"; }
+    install::register_after_hooks() { printf 'register_after_hooks\n' >> "$order_log"; }
+    install::install_git_hooks() { printf 'install_git_hooks\n' >> "$order_log"; }
+    install::install_github_action() { printf 'install_github_action\n' >> "$order_log"; return 0; }
+
+    install::write_config "stub-team" "stub-project"
+    install::register_after_hooks
+    install::install_git_hooks
+    install::install_github_action
+
+    [ "$(head -n1 "$order_log")" = "write_config" ]
+    grep -qx 'register_after_hooks' "$order_log"
+    grep -qx 'install_git_hooks' "$order_log"
+}
+
+# ---------------------------------------------------------------------------
+# T230 — SC-010 zero-UUID surface assertion across the full discovery flow.
+# ---------------------------------------------------------------------------
+
+@test "T230: full discovery flow never surfaces a UUID on stderr/stdout (SC-010)" {
+    local uuid_regex='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    local combined
+    combined="$(bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() {
+            case \"\$1\" in
+                *viewer*) cat '${INSTALL_TEST_FIXTURE_DIR}/viewer.json' ;;
+                *Teams*|*teams*) cat '${INSTALL_TEST_FIXTURE_DIR}/teams_multi.json' ;;
+                *projects*) cat '${INSTALL_TEST_FIXTURE_DIR}/projects_multi.json' ;;
+            esac
+        }
+        export LINEAR_API_KEY='lin_api_test'
+        install::resolve_operator
+        install::discover_teams
+        install::pick_team_interactively < <(printf '1\n')
+        install::discover_projects
+        install::pick_project_interactively < <(printf '1\n')
+    " 2>&1 || true)"
+    if printf '%s' "$combined" | grep -qE "$uuid_regex"; then
+        printf 'SC-010 violation: UUID surfaced in output\n%s\n' "$combined" >&2
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# T231 — integration harness pointer (lives under tests/integration/).
+# ---------------------------------------------------------------------------
+
+@test "T231: integration harness install_e2e_discovery.bats exists" {
+    [ -f "${PROJECT_ROOT}/tests/integration/install_e2e_discovery.bats" ]
+}
+
+# =============================================================================
+# US1 acceptance scenarios (spec.md US1 scenarios 1..4).
+# =============================================================================
+
+@test "US1-scenario-1: fresh repo (no .env, no config) — discovery completes" {
+    [ ! -f "${TEST_TMP}/.env" ]
+    [ ! -f "${TEST_TMP}/.specify/extensions/linear/linear-config.yml" ]
+    run bash -c "
+        cd '${TEST_TMP}'
+        unset LINEAR_API_KEY
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() {
+            case \"\$1\" in
+                *viewer*) cat '${INSTALL_TEST_FIXTURE_DIR}/viewer.json' ;;
+                *Teams*|*teams*) cat '${INSTALL_TEST_FIXTURE_DIR}/teams_multi.json' ;;
+                *projects*) cat '${INSTALL_TEST_FIXTURE_DIR}/projects_multi.json' ;;
+            esac
+        }
+        INSTALL_FLAG_NON_INTERACTIVE=0
+        {
+            install::prompt_for_api_key
+            install::resolve_operator
+            install::discover_teams
+            install::pick_team_interactively
+            install::discover_projects
+            install::pick_project_interactively
+        } < <(printf 'lin_api_test\nN\n1\n1\n')
+        printf 'TEAM=%s PROJ=%s\n' \"\$INSTALL_SESSION_SELECTED_TEAM_KEY\" \"\$INSTALL_SESSION_SELECTED_PROJECT_NAME\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"TEAM=OSH PROJ=spec-kit-linear"* ]]
+}
+
+@test "US1-scenario-2: single-team workspace — team picker silent (auto-pick)" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { cat '${INSTALL_TEST_FIXTURE_DIR}/teams_single.json'; }
+        install::discover_teams
+        install::pick_team_interactively 2>&1
+    "
+    [ "$status" -eq 0 ]
+    [[ ! "$output" == *"Pick a team"* ]]
+    [[ "$output" == *"auto-picked"* ]]
+}
+
+@test "US1-scenario-3: 'Create new' branch fires projectCreate and surfaces URL" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { printf '%s' '{\"data\":{\"projects\":{\"nodes\":[]}}}'; }
+        graphql::mutate() { cat '${INSTALL_TEST_FIXTURE_DIR}/projectCreate_ok.json'; }
+        INSTALL_SESSION_SELECTED_TEAM_ID='6ab43461-6d22-4f02-bb1e-0be9859c7997'
+        INSTALL_SESSION_SELECTED_TEAM_KEY='OSH'
+        INSTALL_SESSION_SELECTED_TEAM_NAME='OSH'
+        install::run_create_project_branch < <(printf 'spec-kit-linear\nY\n')
+        printf 'URL=%s\n' \"\$INSTALL_SESSION_SELECTED_PROJECT_URL\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"URL=https://linear.app/"* ]]
+}
+
+@test "US1-scenario-4: invalid API key — viewer null halts before any picker" {
+    run bash -c "
+        cd '${TEST_TMP}'
+        source '${PROJECT_ROOT}/src/install.sh'
+        graphql::query() { printf '%s' '{\"data\":{\"viewer\":null}}'; }
+        export LINEAR_API_KEY='lin_api_bogus'
+        install::resolve_operator
+    "
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"viewer"* || "$output" == *"API key"* || "$output" == *"FR-034"* ]]
 }

@@ -1130,7 +1130,14 @@ install::_auto_create_or_attach() {
 # =============================================================================
 
 install::resolve_operator() {
-    local query='query Me { viewer { id name email } }'
+    # T233 / FR-048 — single viewer query feeds:
+    #   * FR-034 operator block (INSTALL_OPERATOR_*).
+    #   * FR-038 API-key verification gate.
+    #   * `linear.workspace.{name,url_key}` block in linear-config.yml.
+    #   * The team-list authorization for the next `teams` query.
+    # The same response is cached on INSTALL_SESSION_VIEWER_* module
+    # globals; install::write_config reads them on its single write.
+    local query='query InstallViewer { viewer { id name email organization { name urlKey } } }'
 
     # graphql::query halts the process (exit 2/3/4) on its own when the
     # API key is missing or the request fails. The keys-at-edges
@@ -1138,23 +1145,30 @@ install::resolve_operator() {
     local response viewer_json
     if ! response="$(graphql::query "$query" '{}')"; then
         install::_die 2 \
-            "LINEAR_API_KEY missing or invalid — operator identity required for FR-034 (viewer { id name email })
+            "LINEAR_API_KEY missing or invalid — operator identity required for FR-034 (viewer { id name email organization { name urlKey } })
 hint: set LINEAR_API_KEY in .env or export it before re-running install"
     fi
 
     viewer_json="$(printf '%s' "$response" | jq -c '.data.viewer // null')"
     if [[ -z "$viewer_json" || "$viewer_json" == "null" ]]; then
         install::_die 2 \
-            "LINEAR_API_KEY missing or invalid — operator identity required for FR-034: viewer query returned no data"
+            "LINEAR_API_KEY invalid; create a new key at https://linear.app/settings/api (FR-034 / FR-038: viewer query returned no data)"
     fi
 
     INSTALL_OPERATOR_USER_ID="$(printf '%s' "$viewer_json" | jq -r '.id // ""')"
     INSTALL_OPERATOR_NAME="$(printf '%s' "$viewer_json"   | jq -r '.name // ""')"
     INSTALL_OPERATOR_EMAIL="$(printf '%s' "$viewer_json"  | jq -r '.email // ""')"
 
+    # Spec 002 session-scoped viewer state (FR-048).
+    INSTALL_SESSION_VIEWER_ID="$INSTALL_OPERATOR_USER_ID"
+    INSTALL_SESSION_VIEWER_NAME="$INSTALL_OPERATOR_NAME"
+    INSTALL_SESSION_VIEWER_EMAIL="$INSTALL_OPERATOR_EMAIL"
+    INSTALL_SESSION_VIEWER_ORG_NAME="$(printf '%s' "$viewer_json" | jq -r '.organization.name // ""')"
+    INSTALL_SESSION_VIEWER_ORG_URL_KEY="$(printf '%s' "$viewer_json" | jq -r '.organization.urlKey // ""')"
+
     if [[ -z "$INSTALL_OPERATOR_USER_ID" ]]; then
         install::_die 2 \
-            "LINEAR_API_KEY missing or invalid — operator identity required for FR-034: viewer.id absent from response"
+            "LINEAR_API_KEY invalid; create a new key at https://linear.app/settings/api (FR-034: viewer.id absent from response)"
     fi
 
     # FR-018b summary row — short the UUID to 8 chars for readability.
@@ -1197,6 +1211,9 @@ install::write_config() {
         install::_substitute_uuid_placeholder "$INSTALL_CONFIG_PATH" \
             "linear.project.id" "$project_uuid"
         install::_write_operator_block "$INSTALL_CONFIG_PATH"
+        install::_write_workspace_block "$INSTALL_CONFIG_PATH"
+        install::_write_team_block "$INSTALL_CONFIG_PATH"
+        install::_write_project_block "$INSTALL_CONFIG_PATH"
         return 0
     fi
 
@@ -1211,7 +1228,124 @@ hint: re-run \`specify extension add linear\` (or pass --dev with a checkout of 
     install::_substitute_uuid_placeholder "$INSTALL_CONFIG_PATH" \
         "linear.project.id" "$project_uuid"
     install::_write_operator_block "$INSTALL_CONFIG_PATH"
+    install::_write_workspace_block "$INSTALL_CONFIG_PATH"
+    # T233/T239 — spec 002: populate the linear.team and linear.project
+    # informational fields (key, name) when the discovery flow resolved
+    # them. The reconciler only reads UUIDs but operator-facing tools
+    # like /spec-kit-linear-status surface the friendly names.
+    install::_write_team_block "$INSTALL_CONFIG_PATH"
+    install::_write_project_block "$INSTALL_CONFIG_PATH"
     install::_log_info "wrote ${INSTALL_CONFIG_PATH}"
+}
+
+# -----------------------------------------------------------------------------
+# install::_write_workspace_block <file>  (T233, FR-048)
+#
+# Substitute `linear.workspace.{name,url_key}` from
+# INSTALL_SESSION_VIEWER_ORG_{NAME,URL_KEY} captured by
+# install::resolve_operator. No-op when viewer has not run (test
+# harness shortcuts) — preserves template placeholders verbatim.
+# -----------------------------------------------------------------------------
+install::_write_workspace_block() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+
+    if [[ -n "${INSTALL_SESSION_VIEWER_ORG_NAME:-}" ]]; then
+        install::_substitute_yaml_string_field "$file" "workspace" "name" \
+            "$INSTALL_SESSION_VIEWER_ORG_NAME" "OSH-INFRA"
+    fi
+    if [[ -n "${INSTALL_SESSION_VIEWER_ORG_URL_KEY:-}" ]]; then
+        install::_substitute_yaml_string_field "$file" "workspace" "url_key" \
+            "$INSTALL_SESSION_VIEWER_ORG_URL_KEY" "osh-infra"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# install::_write_team_block <file>  (T233)
+#
+# Substitute `linear.team.{key,name}` from the spec-002 selected-team
+# session state. UUID is already substituted by
+# install::_substitute_uuid_placeholder.
+# -----------------------------------------------------------------------------
+install::_write_team_block() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+
+    if [[ -n "${INSTALL_SESSION_SELECTED_TEAM_KEY:-}" ]]; then
+        install::_substitute_yaml_string_field "$file" "team" "key" \
+            "$INSTALL_SESSION_SELECTED_TEAM_KEY" "OSH"
+    fi
+    if [[ -n "${INSTALL_SESSION_SELECTED_TEAM_NAME:-}" ]]; then
+        install::_substitute_yaml_string_field "$file" "team" "name" \
+            "$INSTALL_SESSION_SELECTED_TEAM_NAME" "OSH-INFRA"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# install::_write_project_block <file>  (T233)
+#
+# Substitute `linear.project.name` from the spec-002 selected-project
+# session state. UUID is already substituted by
+# install::_substitute_uuid_placeholder.
+# -----------------------------------------------------------------------------
+install::_write_project_block() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+
+    if [[ -n "${INSTALL_SESSION_SELECTED_PROJECT_NAME:-}" ]]; then
+        install::_substitute_yaml_string_field "$file" "project" "name" \
+            "$INSTALL_SESSION_SELECTED_PROJECT_NAME" "spec-kit-linear"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# install::_substitute_yaml_string_field <file> <block> <field> <new> <placeholder>
+#
+# Replace `<field>: "<placeholder>"` inside `<block>:` with `<field>:
+# "<new>"`. Mirrors install::_substitute_operator_field but targets
+# arbitrary one-level-nested string fields (team/project/workspace).
+# -----------------------------------------------------------------------------
+install::_substitute_yaml_string_field() {
+    local file="$1"
+    local block="$2"
+    local field="$3"
+    local new_value="$4"
+    local placeholder="$5"
+
+    [[ -f "$file" ]] || return 0
+
+    local tmp
+    tmp="$(mktemp -t spec-kit-linear-config.XXXXXX)"
+    awk -v block="$block" \
+        -v field="$field" \
+        -v placeholder="$placeholder" \
+        -v new_value="$new_value" '
+        BEGIN { in_block = 0; replaced = 0 }
+        {
+            ltrim = $0
+            sub(/^[[:space:]]+/, "", ltrim)
+            if (ltrim == block ":") {
+                in_block = 1
+                print
+                next
+            }
+            # Heuristic: a key line at the two-space indent (the indent
+            # of block: itself) that is not a nested child closes the
+            # block scope.
+            if (in_block && $0 ~ /^  [a-zA-Z_].*:[[:space:]]*$/) {
+                in_block = 0
+            }
+            if (in_block && replaced == 0) {
+                pattern = "^[[:space:]]+" field ":[[:space:]]+\"" placeholder "\""
+                if (match($0, pattern)) {
+                    sub("\"" placeholder "\"", "\"" new_value "\"")
+                    replaced = 1
+                }
+            }
+            print
+        }
+    ' "$file" >"$tmp"
+    mv "$tmp" "$file"
 }
 
 # install::_write_operator_block <file>
@@ -1229,18 +1363,27 @@ hint: re-run \`specify extension add linear\` (or pass --dev with a checkout of 
 install::_write_operator_block() {
     local file="$1"
 
-    if [[ -z "$INSTALL_OPERATOR_USER_ID" ]]; then
+    # T232 / FR-048 — prefer the spec-002 session-scoped viewer state
+    # when present (single-fire single-source-of-truth). Fall back to
+    # the v0.1.0 INSTALL_OPERATOR_* globals to keep the legacy path
+    # bit-for-bit identical when --team / --project / --auto-create
+    # short-circuit the discovery flow.
+    local user_id="${INSTALL_SESSION_VIEWER_ID:-$INSTALL_OPERATOR_USER_ID}"
+    local user_name="${INSTALL_SESSION_VIEWER_NAME:-$INSTALL_OPERATOR_NAME}"
+    local user_email="${INSTALL_SESSION_VIEWER_EMAIL:-$INSTALL_OPERATOR_EMAIL}"
+
+    if [[ -z "$user_id" ]]; then
         return 0
     fi
 
     install::_substitute_operator_field "$file" "user_id" \
-        "\"${INSTALL_OPERATOR_USER_ID}\"" \
+        "\"${user_id}\"" \
         '"00000000-0000-0000-0000-000000000000"'
     install::_substitute_operator_field "$file" "name" \
-        "\"${INSTALL_OPERATOR_NAME}\"" \
+        "\"${user_name}\"" \
         '"Ash Brener"'
     install::_substitute_operator_field "$file" "email" \
-        "\"${INSTALL_OPERATOR_EMAIL}\"" \
+        "\"${user_email}\"" \
         '"ash@example.com"'
 }
 
@@ -2105,6 +2248,7 @@ install::detect_self_install() {
         printf '                 fix: either\n' >&2
         printf '                   (a) install into a different consumer repo, or\n' >&2
         printf '                   (b) once the bridge is listed in the spec-kit community\n' >&2
+        # shellcheck disable=SC2016
         printf '                       catalog (v0.1.x+), use `specify extension add linear`\n' >&2
         printf '                       from the catalog form.\n' >&2
         printf '                 (FR-046 — self-install recursion guard)\n' >&2
@@ -2140,7 +2284,7 @@ install::detect_vendored_git() {
 }
 
 # -----------------------------------------------------------------------------
-# install::prompt_for_api_key  (T205, FR-037)
+# install::prompt_for_api_key  (T205 + T232, FR-037)
 #
 # Resolve LINEAR_API_KEY in priority order per install-prompts.md §2:
 #   1. `LINEAR_API_KEY` env var (highest precedence).
@@ -2148,16 +2292,12 @@ install::detect_vendored_git() {
 #   3. Interactive `read -r -s` prompt (echo suppressed).
 #
 # Populates `INSTALL_SESSION_API_KEY` and `INSTALL_SESSION_API_KEY_SOURCE`
-# (∈ {env, dotenv, prompt}). On (3) follow up with "Save to .env?"
-# (§2.3), .env conflict triage (§2.4), and EOF handling (§2.5).
+# (∈ {env, dotenv, prompt, interactive_saved}). On (3) follow up with
+# "Save to .env?" (§2.3), .env conflict triage (§2.4), and EOF
+# handling (§2.5).
 #
 # Halts (exit 2) when (1) + (2) both miss under `--non-interactive`
 # per FR-037 / FR-045.
-#
-# Phase 2 status: STUB. Reads env var if present, otherwise tries
-# `.env`. Interactive prompt + save flow + conflict triage land in
-# Phase 3 task T232 (US1 wiring) — the bats unit tests in T221..T223
-# drive the full FR-037 resolution order through a controlled stdin.
 # -----------------------------------------------------------------------------
 install::prompt_for_api_key() {
     # Priority 1 — env var.
@@ -2178,46 +2318,274 @@ install::prompt_for_api_key() {
         fi
     fi
 
-    # Priority 3 — interactive prompt. STUB: full FR-037 prompt loop
-    # (save-to-.env, conflict triage, EOF handling) lands in Phase 3
-    # task T232. For Phase 2 we honour FR-045: halt under
-    # --non-interactive when (1)+(2) both miss.
+    # Priority 3 — interactive prompt. Halt under --non-interactive per
+    # FR-037 / FR-045.
     if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
         install::_die 2 \
             "--non-interactive without LINEAR_API_KEY in env or .env (FR-037 / FR-045)"
     fi
 
-    # Phase 2 stub: signal that interactive resolution is needed but
-    # not yet implemented. Phase 3 wiring replaces this with the full
-    # `read -r -s` flow per install-prompts.md §2.
+    # install-prompts.md §2.1 — prompt with echo suppressed.
+    local api_key=""
+    while :; do
+        printf '[linear] Linear API key (input hidden — paste & enter): \n' >&2
+        if ! IFS= read -r -s api_key; then
+            # install-prompts.md §2.5 — EOF on the API key prompt halts.
+            install::_die 2 \
+                "no input received for API key; pass via .env or LINEAR_API_KEY env var, or run interactively. (FR-037)"
+        fi
+        # New-line after silent read so subsequent prompts line up.
+        printf '\n' >&2
+        # Trim surrounding whitespace.
+        api_key="${api_key#"${api_key%%[![:space:]]*}"}"
+        api_key="${api_key%"${api_key##*[![:space:]]}"}"
+        if [[ -n "$api_key" ]]; then
+            break
+        fi
+        printf '[linear] API key cannot be empty; paste your key (or Ctrl-C to abort).\n' >&2
+    done
+
+    INSTALL_SESSION_API_KEY="$api_key"
     INSTALL_SESSION_API_KEY_SOURCE="prompt"
+
+    # install-prompts.md §2.3 — "Save to .env?" follow-up.
+    install::_prompt_save_api_key_to_dotenv
+
     return 0
 }
 
 # -----------------------------------------------------------------------------
-# install::pick_team_interactively  (T206, FR-039)
+# install::_prompt_save_api_key_to_dotenv  (T232, FR-037 + plan.md A5)
 #
-# Consume the `INSTALL_SESSION_TEAMS_*` parallel arrays populated by
-# the S3 `teams` query and produce a single operator pick stored on
-# `INSTALL_SESSION_SELECTED_TEAM_{ID,KEY,NAME}`. Behaviour matrix per
-# install-prompts.md §3:
+# Follow-up after an interactive API-key read: ask the operator whether
+# to write the key to `.env`. On Y (default), append + ensure `.env`
+# is in `.gitignore`. On N, skip. On conflict (an existing
+# `LINEAR_API_KEY=` line in `.env`), delegate to
+# `install::_resolve_dotenv_conflict` per install-prompts.md §2.4.
+# -----------------------------------------------------------------------------
+install::_prompt_save_api_key_to_dotenv() {
+    local reply=""
+    while :; do
+        printf '[linear] Save LINEAR_API_KEY to .env at the repo root? .env is\n' >&2
+        printf '         gitignored (the install will add it if missing).\n' >&2
+        printf '         [Y/n] (default: Y): ' >&2
+        if ! IFS= read -r reply; then
+            # install-prompts.md §2.5 — EOF on the save prompt is default-safe (N).
+            reply="N"
+        fi
+        reply="${reply//[[:space:]]/}"
+        : "${reply:=Y}"
+        case "$reply" in
+            Y|y|Yes|yes|YES) break ;;
+            N|n|No|no|NO)
+                # Operator declined save — keep key in-session only.
+                return 0
+                ;;
+            *)
+                printf '[linear] Pick Y or n:\n' >&2
+                ;;
+        esac
+    done
+
+    # Conflict triage (§2.4): existing LINEAR_API_KEY line in .env.
+    if [[ -f .env ]] && grep -qE '^LINEAR_API_KEY=' .env; then
+        install::_resolve_dotenv_conflict
+        return 0
+    fi
+
+    install::_write_api_key_to_dotenv
+    install::_ensure_dotenv_gitignored
+    INSTALL_SESSION_API_KEY_SOURCE="interactive_saved"
+}
+
+# -----------------------------------------------------------------------------
+# install::_resolve_dotenv_conflict  (T232, install-prompts.md §2.4)
+#
+# When `.env` already holds a different `LINEAR_API_KEY=` line and the
+# operator chose to save the just-entered key, prompt:
+#   * overwrite → portable awk-rewrite of .env (research.md §4).
+#   * keep (default) / empty → discard the just-entered key,
+#                              re-resolve from .env.
+#   * abort → exit 0 (clean abort).
+# -----------------------------------------------------------------------------
+install::_resolve_dotenv_conflict() {
+    local reply=""
+    while :; do
+        printf '[linear] .env already has a LINEAR_API_KEY (from another extension or\n' >&2
+        printf '         a previous install). Overwrite with the key you just entered,\n' >&2
+        printf '         or keep the existing one?\n' >&2
+        printf '         [overwrite/keep/abort] (default: keep): ' >&2
+        if ! IFS= read -r reply; then
+            reply="keep"
+        fi
+        reply="${reply//[[:space:]]/}"
+        : "${reply:=keep}"
+        case "$reply" in
+            overwrite)
+                install::_rewrite_dotenv_api_key
+                INSTALL_SESSION_API_KEY_SOURCE="interactive_saved"
+                install::_ensure_dotenv_gitignored
+                return 0
+                ;;
+            keep|"")
+                # Discard the just-entered key — re-read from .env.
+                local dotenv_value
+                dotenv_value="$(grep -E '^LINEAR_API_KEY=' .env 2>/dev/null | tail -n 1 | sed -E 's/^LINEAR_API_KEY=//' | sed -E 's/^"(.*)"$/\1/' | sed -E "s/^'(.*)'\$/\\1/")"
+                INSTALL_SESSION_API_KEY="$dotenv_value"
+                INSTALL_SESSION_API_KEY_SOURCE="dotenv"
+                return 0
+                ;;
+            abort)
+                exit 0
+                ;;
+            *)
+                printf '[linear] Pick overwrite, keep, or abort.\n' >&2
+                ;;
+        esac
+    done
+}
+
+# -----------------------------------------------------------------------------
+# install::_write_api_key_to_dotenv  (T232)
+# Append (creating the file if absent) a `LINEAR_API_KEY=<value>` line.
+# -----------------------------------------------------------------------------
+install::_write_api_key_to_dotenv() {
+    if [[ -f .env ]] && [[ -s .env ]] && [[ "$(tail -c1 .env | wc -l)" -eq 0 ]]; then
+        printf '\n' >> .env
+    fi
+    printf 'LINEAR_API_KEY=%s\n' "$INSTALL_SESSION_API_KEY" >> .env
+    install::_log_info "wrote LINEAR_API_KEY to .env"
+}
+
+# -----------------------------------------------------------------------------
+# install::_rewrite_dotenv_api_key  (T232, research.md §4)
+# Portable awk-rewrite of `.env`: replace the existing LINEAR_API_KEY=
+# line with the just-entered key, preserve all other lines verbatim.
+# -----------------------------------------------------------------------------
+install::_rewrite_dotenv_api_key() {
+    local tmp
+    tmp="$(mktemp -t spec-kit-linear-dotenv.XXXXXX)"
+    awk -v new_key="$INSTALL_SESSION_API_KEY" '
+        BEGIN { replaced = 0 }
+        /^LINEAR_API_KEY=/ {
+            if (!replaced) {
+                printf "LINEAR_API_KEY=%s\n", new_key
+                replaced = 1
+                next
+            }
+            # Strip any subsequent duplicate lines silently.
+            next
+        }
+        { print }
+        END {
+            if (!replaced) {
+                printf "LINEAR_API_KEY=%s\n", new_key
+            }
+        }
+    ' .env > "$tmp"
+    mv "$tmp" .env
+    install::_log_info "rewrote LINEAR_API_KEY in .env"
+}
+
+# -----------------------------------------------------------------------------
+# install::_ensure_dotenv_gitignored  (T232, plan.md A5)
+# Append `.env` to `.gitignore` if not already present. Idempotent.
+# -----------------------------------------------------------------------------
+install::_ensure_dotenv_gitignored() {
+    if [[ ! -f .gitignore ]]; then
+        printf '.env\n' > .gitignore
+        install::_log_info "created .gitignore with .env entry"
+        return 0
+    fi
+    if grep -qE '^\.env$' .gitignore; then
+        return 0
+    fi
+    if [[ -s .gitignore ]] && [[ "$(tail -c1 .gitignore | wc -l)" -eq 0 ]]; then
+        printf '\n' >> .gitignore
+    fi
+    printf '.env\n' >> .gitignore
+    install::_log_info "added .env to .gitignore"
+}
+
+# -----------------------------------------------------------------------------
+# install::discover_teams  (T234, FR-039 + install-discovery-graphql.md §2)
+#
+# Step S3 of the discovery state machine. Issues the `teams(first: 21)`
+# query and populates the INSTALL_SESSION_TEAMS_{IDS,NAMES,KEYS}
+# parallel arrays for install::pick_team_interactively to consume.
+#
+# Behaviour:
+#   * `--team <UUID>` short-circuits S3 entirely (fast-path; FR-044) —
+#     populates INSTALL_SESSION_SELECTED_TEAM_ID directly.
+#   * Otherwise issues the query, parses nodes, fills arrays.
+#
+# The `first: 21` window (one over the 20-shown ceiling) is the
+# research.md §1 overflow-detection probe — the picker reads
+# `len > 20` and appends the §3.3 warning row.
+# -----------------------------------------------------------------------------
+install::discover_teams() {
+    # Reset arrays so re-invocations don't leak state.
+    INSTALL_SESSION_TEAMS_IDS=()
+    INSTALL_SESSION_TEAMS_NAMES=()
+    INSTALL_SESSION_TEAMS_KEYS=()
+
+    # FR-044 fast path — when --team is passed, skip the query entirely.
+    if [[ -n "$INSTALL_FLAG_TEAM" ]]; then
+        INSTALL_SESSION_SELECTED_TEAM_ID="$INSTALL_FLAG_TEAM"
+        # key/name are not known without a query — populated lazily by
+        # downstream consumers if they need them. For the picker path
+        # (which is skipped), the operator already opted out of the
+        # friendly display.
+        return 0
+    fi
+
+    local query='query InstallTeams { teams(first: 21) { nodes { id name key } } }'
+    local response
+    if ! response="$(graphql::query "$query" '{}')"; then
+        install::_die 3 \
+            "failed to query Linear teams (FR-039); re-run when connectivity returns"
+    fi
+
+    # Parse nodes into parallel arrays. Use tab as a delimiter — Linear
+    # team keys are alphanumeric, names are arbitrary (we read them
+    # whole-line via jq's @tsv).
+    local nodes_tsv id name key
+    nodes_tsv="$(printf '%s' "$response" \
+        | jq -r '.data.teams.nodes[]? | [.id, .name, .key] | @tsv')"
+    if [[ -z "$nodes_tsv" ]]; then
+        return 0
+    fi
+    while IFS=$'\t' read -r id name key; do
+        INSTALL_SESSION_TEAMS_IDS+=("$id")
+        INSTALL_SESSION_TEAMS_NAMES+=("$name")
+        INSTALL_SESSION_TEAMS_KEYS+=("$key")
+    done <<< "$nodes_tsv"
+}
+
+# -----------------------------------------------------------------------------
+# install::pick_team_interactively  (T206 + T234, FR-039 + install-prompts.md §3)
+#
+# Consume the INSTALL_SESSION_TEAMS_* parallel arrays populated by
+# install::discover_teams and produce a single operator pick stored on
+# INSTALL_SESSION_SELECTED_TEAM_{ID,KEY,NAME}. Behaviour matrix:
 #
 #   len == 0  → halt exit 2 with §3.5 remediation.
 #   len == 1  → auto-pick, emit §3.4 surface row.
 #   len >= 2  → render `%2d) %-8s — %s` numbered list, prompt
-#               `Pick a team [1-N]:`, range-validate, re-prompt
-#               on invalid.
+#               `Pick a team [1-N]:`, range-validate, re-prompt on
+#               invalid input.
 #   len >  20 → render first 20 + §3.3 overflow warning row,
 #               then prompt as `[1-20]`.
 #
 # EOF / Ctrl-C → halt exit 2 with §3.6 remediation.
-#
-# Phase 2 status: STUB. Signature + array consumption + auto-pick (len
-# == 1) wired so the bats harness can assert the picker exists.
-# Numbered-list rendering, overflow warning, range validation, and EOF
-# handling all land in Phase 3 task T234.
 # -----------------------------------------------------------------------------
 install::pick_team_interactively() {
+    # Fast-path: --team <UUID> already populated SELECTED_TEAM_ID.
+    if [[ -n "${INSTALL_SESSION_SELECTED_TEAM_ID:-}" ]] && \
+       (( ${#INSTALL_SESSION_TEAMS_IDS[@]} == 0 )); then
+        return 0
+    fi
+
     local team_count="${#INSTALL_SESSION_TEAMS_IDS[@]}"
 
     if (( team_count == 0 )); then
@@ -2234,73 +2602,201 @@ install::pick_team_interactively() {
         return 0
     fi
 
-    # Phase 2 stub: multi-team rendering + range-validated prompt is
-    # implemented in Phase 3 task T234. For now default to the first
-    # team so the test harness can assert the helper completed without
-    # error; Phase 3 tests (T225) replace this stub with the full
-    # interactive flow.
-    INSTALL_SESSION_SELECTED_TEAM_ID="${INSTALL_SESSION_TEAMS_IDS[0]}"
-    INSTALL_SESSION_SELECTED_TEAM_KEY="${INSTALL_SESSION_TEAMS_KEYS[0]}"
-    INSTALL_SESSION_SELECTED_TEAM_NAME="${INSTALL_SESSION_TEAMS_NAMES[0]}"
+    # Multi-team rendering per install-prompts.md §3.1.
+    local visible_count=$team_count
+    local overflow=0
+    if (( team_count > 20 )); then
+        visible_count=20
+        overflow=$(( team_count - 20 ))
+    fi
+
+    printf '[linear] Teams accessible to this API key:\n' >&2
+    local i
+    for (( i = 0; i < visible_count; i++ )); do
+        printf '  %2d) %-8s — %s\n' \
+            "$(( i + 1 ))" \
+            "${INSTALL_SESSION_TEAMS_KEYS[$i]}" \
+            "${INSTALL_SESSION_TEAMS_NAMES[$i]}" >&2
+    done
+    if (( overflow > 0 )); then
+        printf '  ... and %d more not shown.\n' "$overflow" >&2
+        printf '  Pass --team <UUID> to install non-interactively. (FR-039 / SC-013)\n' >&2
+    fi
+
+    # Range-validated prompt loop.
+    local reply choice
+    while :; do
+        printf 'Pick a team [1-%d]: ' "$visible_count" >&2
+        if ! IFS= read -r reply; then
+            install::_die 2 \
+                "no team selected. Pass --team <UUID> or run interactively to pick from the list above. (FR-039 / FR-045)"
+        fi
+        reply="${reply//[[:space:]]/}"
+        if ! [[ "$reply" =~ ^[0-9]+$ ]]; then
+            printf '[linear] invalid choice "%s"; pick a number between 1 and %d:\n' \
+                "$reply" "$visible_count" >&2
+            continue
+        fi
+        choice=$reply
+        if (( choice < 1 || choice > visible_count )); then
+            printf '[linear] invalid choice "%s"; pick a number between 1 and %d:\n' \
+                "$reply" "$visible_count" >&2
+            continue
+        fi
+        break
+    done
+
+    local idx=$(( choice - 1 ))
+    INSTALL_SESSION_SELECTED_TEAM_ID="${INSTALL_SESSION_TEAMS_IDS[$idx]}"
+    INSTALL_SESSION_SELECTED_TEAM_KEY="${INSTALL_SESSION_TEAMS_KEYS[$idx]}"
+    INSTALL_SESSION_SELECTED_TEAM_NAME="${INSTALL_SESSION_TEAMS_NAMES[$idx]}"
     return 0
 }
 
 # -----------------------------------------------------------------------------
-# install::pick_project_interactively  (T207, FR-040)
+# install::discover_projects  (T235, FR-040 + install-discovery-graphql.md §3)
 #
-# Same numbered-list rendering as the team picker, with two
-# additions per install-prompts.md §4:
+# Step S4 of the discovery state machine. Issues the
+# `team(id).projects(first: 21)` query with INSTALL_SESSION_SELECTED_TEAM_ID
+# and populates the INSTALL_SESSION_PROJECTS_{IDS,NAMES} parallel arrays
+# for install::pick_project_interactively to consume.
 #
+# Behaviour:
+#   * `--project <UUID>` short-circuits S4 entirely (fast-path; FR-044).
+#   * Otherwise issues the query and fills arrays.
+# -----------------------------------------------------------------------------
+install::discover_projects() {
+    INSTALL_SESSION_PROJECTS_IDS=()
+    INSTALL_SESSION_PROJECTS_NAMES=()
+
+    # FR-044 fast path — --project bypasses S4 entirely.
+    if [[ -n "$INSTALL_FLAG_PROJECT" ]]; then
+        INSTALL_SESSION_SELECTED_PROJECT_ID="$INSTALL_FLAG_PROJECT"
+        INSTALL_SESSION_PROJECT_CHOICE="attach"
+        return 0
+    fi
+
+    local team_id="${INSTALL_SESSION_SELECTED_TEAM_ID:?install::discover_projects: selected team unset}"
+
+    # shellcheck disable=SC2016
+    local query='query InstallTeamProjects($teamId: String!) {
+        team(id: $teamId) {
+            id
+            projects(first: 21) { nodes { id name } }
+        }
+    }'
+    local vars
+    vars="$(jq -nc --arg teamId "$team_id" '{teamId: $teamId}')"
+
+    local response
+    if ! response="$(graphql::query "$query" "$vars")"; then
+        install::_die 3 \
+            "failed to query Linear projects for selected team (FR-040); re-run when connectivity returns"
+    fi
+
+    local nodes_tsv id name
+    nodes_tsv="$(printf '%s' "$response" \
+        | jq -r '.data.team.projects.nodes[]? | [.id, .name] | @tsv')"
+    if [[ -z "$nodes_tsv" ]]; then
+        return 0
+    fi
+    while IFS=$'\t' read -r id name; do
+        INSTALL_SESSION_PROJECTS_IDS+=("$id")
+        INSTALL_SESSION_PROJECTS_NAMES+=("$name")
+    done <<< "$nodes_tsv"
+}
+
+# -----------------------------------------------------------------------------
+# install::pick_project_interactively  (T207 + T235, FR-040 + install-prompts.md §4)
+#
+# Same numbered-list rendering as the team picker, with two additions:
 #   1. "Create new project" is ALWAYS appended as the FINAL option
-#      (index N+1 where N == len(projects)). Even when N == 0,
-#      "Create new project" is option `1)`.
-#   2. Sets `INSTALL_SESSION_PROJECT_CHOICE` ∈ {attach, create} per
-#      the operator's pick.
+#      (index N+1 where N == len(projects)).
+#   2. Sets INSTALL_SESSION_PROJECT_CHOICE ∈ {attach, create}.
 #
 # Overflow warning (§4.3) appended when N > 20.
-#
-# Phase 2 status: STUB. Signature + array consumption + the empty-list
-# "Create new is the only option" branch wired so the bats harness can
-# assert the picker exists. Full multi-project rendering + range
-# validation lands in Phase 3 task T235.
 # -----------------------------------------------------------------------------
 install::pick_project_interactively() {
+    # Fast-path: --project <UUID> populated PROJECT_ID + CHOICE=attach.
+    if [[ -n "${INSTALL_SESSION_SELECTED_PROJECT_ID:-}" ]] && \
+       [[ "${INSTALL_SESSION_PROJECT_CHOICE:-}" == "attach" ]] && \
+       (( ${#INSTALL_SESSION_PROJECTS_IDS[@]} == 0 )); then
+        return 0
+    fi
+
     local project_count="${#INSTALL_SESSION_PROJECTS_IDS[@]}"
+    local visible_count=$project_count
+    local overflow=0
+    if (( project_count > 20 )); then
+        visible_count=20
+        overflow=$(( project_count - 20 ))
+    fi
+    # Total selectable options = visible projects + "Create new" tail.
+    local total_options=$(( visible_count + 1 ))
 
     if (( project_count == 0 )); then
-        # FR-040: zero projects → "Create new project" is the only
-        # option (and effectively automatic in Phase 2).
+        printf '[linear] No existing projects in %s.\n' \
+            "${INSTALL_SESSION_SELECTED_TEAM_KEY:-team}" >&2
+    else
+        printf '[linear] Projects in %s:\n' \
+            "${INSTALL_SESSION_SELECTED_TEAM_KEY:-team}" >&2
+    fi
+    local i
+    for (( i = 0; i < visible_count; i++ )); do
+        printf '  %2d) %s\n' \
+            "$(( i + 1 ))" \
+            "${INSTALL_SESSION_PROJECTS_NAMES[$i]}" >&2
+    done
+    printf '  %2d) Create new project\n' "$total_options" >&2
+    if (( overflow > 0 )); then
+        printf '  ... and %d more not shown.\n' "$overflow" >&2
+        printf '  Pass --project <UUID> to install non-interactively. (FR-040)\n' >&2
+    fi
+
+    local reply choice
+    while :; do
+        printf 'Pick a project [1-%d]: ' "$total_options" >&2
+        if ! IFS= read -r reply; then
+            install::_die 2 \
+                "no project selected. Pass --project <UUID> or run interactively to pick from the list above. (FR-040 / FR-045)"
+        fi
+        reply="${reply//[[:space:]]/}"
+        if ! [[ "$reply" =~ ^[0-9]+$ ]]; then
+            printf '[linear] invalid choice "%s"; pick a number between 1 and %d:\n' \
+                "$reply" "$total_options" >&2
+            continue
+        fi
+        choice=$reply
+        if (( choice < 1 || choice > total_options )); then
+            printf '[linear] invalid choice "%s"; pick a number between 1 and %d:\n' \
+                "$reply" "$total_options" >&2
+            continue
+        fi
+        break
+    done
+
+    if (( choice == total_options )); then
+        # "Create new project" tail.
         INSTALL_SESSION_PROJECT_CHOICE="create"
         return 0
     fi
 
-    # Phase 2 stub: multi-project rendering + Create-new tail + range
-    # validation are implemented in Phase 3 task T235. Default to the
-    # first project (attach branch) so the harness can verify the
-    # helper exists; Phase 3 tests (T226) drive the full flow.
+    local idx=$(( choice - 1 ))
     INSTALL_SESSION_PROJECT_CHOICE="attach"
-    INSTALL_SESSION_SELECTED_PROJECT_ID="${INSTALL_SESSION_PROJECTS_IDS[0]}"
-    INSTALL_SESSION_SELECTED_PROJECT_NAME="${INSTALL_SESSION_PROJECTS_NAMES[0]}"
+    INSTALL_SESSION_SELECTED_PROJECT_ID="${INSTALL_SESSION_PROJECTS_IDS[$idx]}"
+    INSTALL_SESSION_SELECTED_PROJECT_NAME="${INSTALL_SESSION_PROJECTS_NAMES[$idx]}"
     return 0
 }
 
 # -----------------------------------------------------------------------------
-# install::prompt_new_project_name  (T208, FR-041)
+# install::prompt_new_project_name  (T208 + T236, FR-041 + install-prompts.md §5)
 #
 # Prompt for the new project's name with the repo basename as the
-# default per install-prompts.md §5 + plan.md A6. Runs the
-# duplicate-name pre-check via the existing `install::_find_existing_project`
-# (`src/install.sh:843`) and renders the `[create-anyway/pick-existing/rename]`
-# triage prompt on a hit (§5.3). Loops on `rename`.
+# default per install-prompts.md §5.1 + plan.md A6. Echoes the chosen
+# name to stdout; the caller drives the duplicate-name pre-check and
+# the projectCreate mutation.
 #
-# On accept (no duplicate, or operator picked `create-anyway`), echoes
-# the chosen name to stdout for the caller's S5 `projectCreate`
-# mutation.
-#
-# Phase 2 status: STUB. Returns the repo basename without prompting
-# or duplicate-checking — the full interactive prompt loop lands in
-# Phase 3 task T236. Bats tests (T227) drive the full flow with
-# fixture-mocked duplicate-name responses.
+# Empty input accepts the default. EOF halts with exit 2.
 # -----------------------------------------------------------------------------
 install::prompt_new_project_name() {
     local default_name
@@ -2308,10 +2804,217 @@ install::prompt_new_project_name() {
         default_name="$(basename "$(pwd)")"
     fi
 
-    # Phase 2 stub: echo the default name; Phase 3 task T236 adds the
-    # `read -r` prompt + duplicate-name pre-check + triage loop per
-    # install-prompts.md §5.
-    printf '%s\n' "$default_name"
+    local name=""
+    printf '[linear] New Linear Project name [%s]: ' "$default_name" >&2
+    if ! IFS= read -r name; then
+        install::_die 2 \
+            "no input received for new Project name; pass --project <UUID> or run interactively. (FR-041 / FR-045)"
+    fi
+    # Trim whitespace.
+    name="${name#"${name%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    : "${name:=$default_name}"
+    printf '%s\n' "$name"
+}
+
+# -----------------------------------------------------------------------------
+# install::_handle_duplicate_name <team_uuid> <project_name>  (T236, FR-041 + §5.3)
+#
+# Called by install::run_create_project_branch when
+# install::_find_existing_project returns a non-empty result. Renders
+# the `[create-anyway/pick-existing/rename]` prompt and sets one of:
+#   * INSTALL_SESSION_PROJECT_CHOICE=attach + selected UUID/name/url
+#     when operator picks `pick-existing` (default).
+#   * INSTALL_SESSION_PROJECT_CHOICE=create when operator picks
+#     `create-anyway` (caller proceeds to confirm prompt + mutation).
+#   * On `rename`, returns 10 so the caller loops back to the name prompt.
+# -----------------------------------------------------------------------------
+install::_handle_duplicate_name() {
+    local team_uuid="$1"
+    local project_name="$2"
+
+    local existing
+    existing="$(install::_find_existing_project "$team_uuid" "$project_name")"
+    local match_count
+    match_count="$(printf '%s' "$existing" | jq 'length' 2>/dev/null || printf '0')"
+    if ! [[ "$match_count" =~ ^[0-9]+$ ]] || (( match_count == 0 )); then
+        # No duplicate — caller proceeds to mutation directly.
+        INSTALL_SESSION_PROJECT_CHOICE="create"
+        return 0
+    fi
+
+    # Use the first match (Linear allows duplicates but `eq:` is rare
+    # enough that the first is almost always THE match).
+    local existing_id existing_url
+    existing_id="$(printf '%s' "$existing" | jq -r '.[0].id // ""')"
+    existing_url="$(printf '%s' "$existing" | jq -r '.[0].url // ""')"
+
+    local reply
+    while :; do
+        printf '[linear] A project named "%s" already exists in %s.\n' \
+            "$project_name" "${INSTALL_SESSION_SELECTED_TEAM_KEY:-the team}" >&2
+        printf '         [create-anyway/pick-existing/rename] (default: pick-existing): ' >&2
+        if ! IFS= read -r reply; then
+            reply="pick-existing"
+        fi
+        reply="${reply//[[:space:]]/}"
+        : "${reply:=pick-existing}"
+        case "$reply" in
+            pick-existing)
+                INSTALL_SESSION_PROJECT_CHOICE="attach"
+                INSTALL_SESSION_SELECTED_PROJECT_ID="$existing_id"
+                INSTALL_SESSION_SELECTED_PROJECT_NAME="$project_name"
+                INSTALL_SESSION_SELECTED_PROJECT_URL="$existing_url"
+                summary::add "skipped" \
+                    "projectCreate '${project_name}' — attached to existing match"
+                return 0
+                ;;
+            create-anyway)
+                INSTALL_SESSION_PROJECT_CHOICE="create"
+                return 0
+                ;;
+            rename)
+                return 10
+                ;;
+            *)
+                printf '[linear] Pick create-anyway, pick-existing, or rename.\n' >&2
+                ;;
+        esac
+    done
+}
+
+# -----------------------------------------------------------------------------
+# install::create_linear_project <team_uuid> <project_name>  (T236, FR-041)
+#
+# Issue the `projectCreate` mutation per install-discovery-graphql.md §4.
+# On success populates INSTALL_SESSION_SELECTED_PROJECT_{ID,NAME,URL}
+# and emits the §5.5 surface row. On failure halts with exit 1 +
+# verbatim Linear error per §5.6.
+# -----------------------------------------------------------------------------
+install::create_linear_project() {
+    local team_uuid="${1:?install::create_linear_project: team_uuid required}"
+    local project_name="${2:?install::create_linear_project: project_name required}"
+
+    # shellcheck disable=SC2016
+    local mutation='mutation InstallProjectCreate($input: ProjectCreateInput!) {
+        projectCreate(input: $input) {
+            success
+            project { id name url }
+        }
+    }'
+    local input_json vars response
+    input_json="$(jq -nc \
+        --arg name "$project_name" \
+        --arg team "$team_uuid" \
+        --arg description "Auto-created by speckit.linear.install for spec-kit lifecycle mirroring." \
+        '{ name: $name, teamIds: [$team], description: $description }')"
+    vars="$(jq -nc --argjson input "$input_json" '{input: $input}')"
+
+    if ! response="$(graphql::mutate "$mutation" "$vars" 2>/dev/null)"; then
+        install::_die 1 \
+            "projectCreate '${project_name}' failed (transport). Re-run install when Linear is reachable. (FR-041)"
+    fi
+
+    local success
+    success="$(printf '%s' "$response" | jq -r '.data.projectCreate.success // false')"
+    if [[ "$success" != "true" ]]; then
+        local verbatim_error
+        verbatim_error="$(printf '%s' "$response" | jq -r '.errors[0].message // .data.projectCreate // "unknown error"' 2>/dev/null)"
+        install::_die 1 \
+            "projectCreate failed: ${verbatim_error}
+Re-run install to try again (your team selection is remembered), or pick an existing project. (FR-041)"
+    fi
+
+    local new_id new_name new_url
+    new_id="$(printf '%s' "$response" | jq -r '.data.projectCreate.project.id // ""')"
+    new_name="$(printf '%s' "$response" | jq -r '.data.projectCreate.project.name // ""')"
+    new_url="$(printf '%s' "$response" | jq -r '.data.projectCreate.project.url // ""')"
+
+    if [[ -z "$new_id" ]]; then
+        install::_die 1 \
+            "projectCreate returned success but no project.id — please file a bug report (FR-041)"
+    fi
+
+    INSTALL_SESSION_SELECTED_PROJECT_ID="$new_id"
+    INSTALL_SESSION_SELECTED_PROJECT_NAME="$new_name"
+    INSTALL_SESSION_SELECTED_PROJECT_URL="$new_url"
+    INSTALL_SESSION_PROJECT_CHOICE="create"
+
+    # Mirror the legacy install::_create_project module globals so the
+    # v0.1.0 summary block continues to surface "Project resolved" rows.
+    INSTALL_RESOLVED_PROJECT_URL="$new_url"
+    INSTALL_RESOLVED_PROJECT_NAME="$new_name"
+
+    summary::add "created" "projectCreate '${new_name}' (URL recorded in summary)"
+    if [[ -n "$new_url" ]]; then
+        install::_log_info "Created Linear Project: ${new_url}"
+    fi
+    install::_log_info \
+        "Project ID is recorded internally and written to .specify/extensions/linear/linear-config.yml."
+}
+
+# -----------------------------------------------------------------------------
+# install::run_create_project_branch  (T236, FR-041 + install-prompts.md §5)
+#
+# Step S5 of the discovery state machine. Orchestrates the "Create new
+# project" branch:
+#   1. Prompt for name (§5.1, default = repo basename).
+#   2. Duplicate-name pre-check + triage (§5.3).
+#   3. Confirm prompt (§5.4).
+#   4. Fire projectCreate mutation via install::create_linear_project.
+#
+# Loops on `rename` per §5.3 / §5.4. Honours the operator's CHOICE on
+# exit: `attach` means the duplicate-name handler attached to an
+# existing project, `create` means the mutation fired (or the loop
+# completed cleanly).
+# -----------------------------------------------------------------------------
+install::run_create_project_branch() {
+    local team_uuid="${INSTALL_SESSION_SELECTED_TEAM_ID:?install::run_create_project_branch: selected team unset}"
+
+    while :; do
+        local project_name
+        project_name="$(install::prompt_new_project_name)"
+        if [[ -z "$project_name" ]]; then
+            continue
+        fi
+
+        # §5.3 duplicate-name pre-check.
+        install::_handle_duplicate_name "$team_uuid" "$project_name"
+        local rc=$?
+        if (( rc == 10 )); then
+            # `rename` — loop back to name prompt.
+            continue
+        fi
+        if [[ "$INSTALL_SESSION_PROJECT_CHOICE" == "attach" ]]; then
+            return 0
+        fi
+
+        # §5.4 confirm prompt.
+        local confirm
+        printf '[linear] Create new Linear Project "%s" in %s? [Y/n] (default: Y): ' \
+            "$project_name" "${INSTALL_SESSION_SELECTED_TEAM_KEY:-team}" >&2
+        if ! IFS= read -r confirm; then
+            install::_die 2 \
+                "no input received for project-create confirmation; pass --project <UUID> or run interactively. (FR-041 / FR-045)"
+        fi
+        confirm="${confirm//[[:space:]]/}"
+        : "${confirm:=Y}"
+        case "$confirm" in
+            Y|y|Yes|yes|YES)
+                install::create_linear_project "$team_uuid" "$project_name"
+                return 0
+                ;;
+            N|n|No|no|NO)
+                # Loop back to name prompt with the just-typed name as default.
+                continue
+                ;;
+            *)
+                # Treat any unrecognized input as Y per §5.4 default-safe.
+                install::create_linear_project "$team_uuid" "$project_name"
+                return 0
+                ;;
+        esac
+    done
 }
 
 # -----------------------------------------------------------------------------
@@ -2344,6 +3047,70 @@ install::quick_validate_binding() {
     INSTALL_SESSION_SELECTED_TEAM_ID="$team_uuid"
     INSTALL_SESSION_SELECTED_PROJECT_ID="$project_uuid"
     return 0
+}
+
+# -----------------------------------------------------------------------------
+# install::_should_use_discovery_flow  (T232, spec 002 dispatch gate)
+#
+# Returns 0 (true) when the new spec-002 viewer-driven discovery flow
+# should run; returns non-zero when the legacy v0.1.0 path should run.
+#
+# Truth table:
+#   --team SET, --project SET                   → legacy (FR-044 fast path)
+#   --team SET, --auto-create SET               → legacy (CI-compat)
+#   --team SET, neither --project nor --auto-create:
+#                                               → legacy (v0.1.0 honoured)
+#   --project SET                               → legacy (existing UUID)
+#   --auto-create SET                           → legacy (v0.1.0 --auto-create)
+#   No flags                                    → discovery (the new default)
+#
+# Phase 4 (US2 — T248..T251) will collapse most legacy paths into the
+# discovery flow's fast-path branches. For Phase 3 the rule is the
+# simpler "any v0.1.0 flag triggers v0.1.0 behaviour" guard so the
+# SC-011 regression suite stays GREEN unchanged.
+# -----------------------------------------------------------------------------
+install::_should_use_discovery_flow() {
+    [[ -z "$INSTALL_FLAG_TEAM" ]] \
+        && [[ -z "$INSTALL_FLAG_PROJECT" ]] \
+        && (( INSTALL_FLAG_AUTO_CREATE == 0 ))
+}
+
+# -----------------------------------------------------------------------------
+# install::run_discovery_flow  (T232 + T234..T236, FR-037..FR-041 / FR-048)
+#
+# Drives the spec 002 viewer-driven discovery state machine end-to-end:
+#   S1 → install::prompt_for_api_key            (FR-037)
+#   S2 → install::resolve_operator              (FR-038 + FR-048)
+#   S3 → install::discover_teams                (FR-039)
+#         + install::pick_team_interactively   (FR-039 picker)
+#   S4 → install::discover_projects             (FR-040)
+#         + install::pick_project_interactively (FR-040 picker)
+#   S5 → install::run_create_project_branch    (FR-041; only when
+#                                                operator picked
+#                                                "Create new project")
+#
+# On exit:
+#   * INSTALL_SESSION_SELECTED_TEAM_ID is populated.
+#   * INSTALL_SESSION_SELECTED_PROJECT_ID is populated.
+#   * The operator never sees a Linear UUID (SC-010).
+# -----------------------------------------------------------------------------
+install::run_discovery_flow() {
+    install::prompt_for_api_key
+    # The viewer query is the FR-048 single-fire authorization probe.
+    # It populates INSTALL_OPERATOR_* (FR-034), INSTALL_SESSION_VIEWER_*
+    # (workspace block), and validates the API key BEFORE any picker
+    # fires (US1 scenario 4).
+    install::resolve_operator
+
+    install::discover_teams
+    install::pick_team_interactively
+
+    install::discover_projects
+    install::pick_project_interactively
+
+    if [[ "$INSTALL_SESSION_PROJECT_CHOICE" == "create" ]]; then
+        install::run_create_project_branch
+    fi
 }
 
 # =============================================================================
@@ -2387,18 +3154,40 @@ install::main() {
         summary::add "warned" "dogfood-loop guard active (export SPECKIT_LINEAR_DOGFOOD_SAFE=true to enable hooks)"
     fi
 
-    # ---- Step 2: resolve UUIDs (T041 / FR-002) -----------------------------
+    # ---- Step 2: resolve UUIDs (T041 / FR-002 + spec 002 T232..T237) -------
+    # Spec 002 routes the install through one of three paths:
+    #   1. No UUID flags → new viewer-driven discovery (S1..S5 + write).
+    #   2. --team and/or --project / --auto-create → legacy v0.1.0 path
+    #      preserved bit-for-bit so SC-011 stays GREEN.
+    #
+    # The new path resolves operator identity FIRST (so the viewer call
+    # feeds FR-034 + FR-038 + FR-039 authorization per FR-048's single
+    # fire mandate). The legacy path resolves operator LAST so existing
+    # CI invocations short-circuit on team/project failures before the
+    # viewer round trip — bit-for-bit identical to v0.1.0.
     local team_uuid project_uuid
-    team_uuid="$(install::resolve_team_uuid)"
-    project_uuid="$(install::resolve_project_uuid "$team_uuid")"
+    if install::_should_use_discovery_flow; then
+        install::run_discovery_flow
+        team_uuid="$INSTALL_SESSION_SELECTED_TEAM_ID"
+        project_uuid="$INSTALL_SESSION_SELECTED_PROJECT_ID"
+    else
+        team_uuid="$(install::resolve_team_uuid)"
+        project_uuid="$(install::resolve_project_uuid "$team_uuid")"
+        # ---- Step 2b: resolve operator identity (FR-034) -------------------
+        # Capture `viewer { id name email organization }` so the
+        # reconciler can pass assigneeId on every issueCreate. Runs
+        # AFTER team/project so any team/project failure short-circuits
+        # before we hit the network for the viewer query; runs BEFORE
+        # write_config so the operator block is populated in the same
+        # single write of linear-config.yml.
+        install::resolve_operator
+    fi
 
-    # ---- Step 2b: resolve operator identity (FR-034) -----------------------
-    # Capture `viewer { id name email }` so the reconciler can pass
-    # assigneeId on every issueCreate. Runs AFTER team/project so any
-    # team/project failure short-circuits before we hit the network for
-    # the viewer query; runs BEFORE write_config so the operator block
-    # is populated in the same single write of linear-config.yml.
-    install::resolve_operator
+    # ---- Step 2c (spec 002 FR-042) — gate write_config on resolved IDs ----
+    if [[ -z "$team_uuid" || -z "$project_uuid" ]]; then
+        install::_die 2 \
+            "discovery flow did not resolve both Team and Project UUIDs (FR-042); cannot proceed with config write"
+    fi
 
     install::write_config "$team_uuid" "$project_uuid"
     summary::add "created" "linear-config.yml at ${INSTALL_CONFIG_PATH}"
@@ -2431,11 +3220,22 @@ install::main() {
 
     # ---- Step 6: final summary + next-step pointer -------------------------
     {
-        if [[ -n "$INSTALL_RESOLVED_PROJECT_URL" ]]; then
+        # T239 / install-prompts.md §7 — "Key sourced from" row, surfaced
+        # whenever the spec-002 discovery flow resolved the API key.
+        if [[ -n "$INSTALL_SESSION_API_KEY_SOURCE" ]]; then
+            printf '\n[linear] Key sourced from: %s\n' \
+                "$INSTALL_SESSION_API_KEY_SOURCE"
+        fi
+        # T239 — surface the projectCreate URL (no UUID per SC-010).
+        if [[ -n "$INSTALL_SESSION_SELECTED_PROJECT_URL" ]]; then
+            printf '[linear] Open in Linear: %s\n' \
+                "$INSTALL_SESSION_SELECTED_PROJECT_URL"
+        elif [[ -n "$INSTALL_RESOLVED_PROJECT_URL" ]]; then
+            # Legacy v0.1.0 path (--auto-create / attach-existing).
+            # NOTE: do NOT print project_uuid here per SC-010 — the URL
+            # alone is the operator's path back to Linear.
             printf '\n[linear] Project resolved: %s\n' "$INSTALL_RESOLVED_PROJECT_URL"
-            printf '         (name: %s, uuid: %s)\n' \
-                "${INSTALL_RESOLVED_PROJECT_NAME:-unknown}" \
-                "$project_uuid"
+            printf '         (name: %s)\n' "${INSTALL_RESOLVED_PROJECT_NAME:-unknown}"
         fi
         if (( INSTALL_DOGFOOD_SAFE_MODE == 1 )); then
             printf '\n[linear] dogfood-safe mode is engaged (FR-033b).\n'
