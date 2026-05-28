@@ -39,6 +39,11 @@ on:
     branches: ["**"]
   push:
     branches: [main]
+  # Manual fallback — useful when an upstream sync event silently no-ops
+  # (we hit this when ci.yml was missing on main; GitHub Actions sometimes
+  # caches the "no workflow on base" state and stops triggering on PR
+  # synchronize even after the workflow file lands on main).
+  workflow_dispatch:
 
 permissions:
   contents: read
