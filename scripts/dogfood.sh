@@ -688,7 +688,9 @@ run_linear_verification() {
     fi
 
     # shellcheck disable=SC2016 # GraphQL literal: $teamId is a GraphQL variable, not a shell var.
-    local project_query='query($teamId: String!) {
+    # Linear's schema uses ID for UUID lookups — passing String! to a
+    # filter that expects ID! fails with GRAPHQL_VALIDATION_FAILED.
+    local project_query='query($teamId: ID!) {
       projects(filter: { accessibleTeams: { id: { eq: $teamId } } }, first: 50) {
         nodes { id name url state }
       }
@@ -723,7 +725,8 @@ run_linear_verification() {
 
     # Issue probe — look up by team + by speckit-spec:001 label OR title fragment.
     # shellcheck disable=SC2016 # GraphQL literal: $teamId is a GraphQL variable, not a shell var.
-    local issue_query='query($teamId: String!) {
+    # ID! (not String!) — Linear schema uses ID for UUID filters.
+    local issue_query='query($teamId: ID!) {
       issues(
         filter: {
           team: { id: { eq: $teamId } }

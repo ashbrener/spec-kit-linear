@@ -99,6 +99,14 @@ readonly RECONCILE_CONFIG_PATH_DEFAULT=".specify/extensions/linear/linear-config
 readonly RECONCILE_MEMORY_BEGIN="<!-- spec-kit-linear:memory:begin -->"
 readonly RECONCILE_MEMORY_END="<!-- spec-kit-linear:memory:end -->"
 
+# The fenced markers around the diagrams pointer block in spec Issue
+# descriptions. Separate fence family from memory block so each can be
+# independently rewritten without disturbing the other. The diagrams
+# block is best-effort: when the consumer repo's git remote isn't a
+# GitHub URL we omit the block entirely rather than emit broken links.
+readonly RECONCILE_DIAGRAMS_BEGIN="<!-- spec-kit-linear:diagrams:begin -->"
+readonly RECONCILE_DIAGRAMS_END="<!-- spec-kit-linear:diagrams:end -->"
+
 # Header preface for task-phase sub-issue descriptions (FR-006). The
 # one-way semantics must be impossible to miss per spec. Backticks here
 # delimit a markdown code-span, not a bash subshell.
@@ -121,6 +129,20 @@ declare -gA _RECONCILE_LABEL_ID_CACHE=()
 # linear.operator.user_id so the missing-operator warning fires
 # exactly once per reconcile run rather than once per Issue created.
 declare -g _RECONCILE_OPERATOR_WARNED=0
+
+# Diagrams-block "no GitHub remote" warning latch — same one-shot
+# pattern as the operator-assignee warning above. Flipped on the
+# first render_diagrams_block call that can't resolve a github.com
+# base URL so the warning fires once per reconcile rather than once
+# per spec.
+declare -g _RECONCILE_DIAGRAMS_WARNED=0
+
+# FR-002 Project Status accumulator. Each per-spec process_spec call
+# appends one row (newline-separated): `<lifecycle_phase>\t<last_touched_epoch>`.
+# After the loop, reconcile::sync_project_status reads the buffer to
+# decide whether to flip the Project's Status enum to started /
+# paused / completed (cancelled is never touched by the bridge).
+declare -g _RECONCILE_LIFECYCLE_ROWS=""
 
 # -----------------------------------------------------------------------------
 # CLI flags — populated by reconcile::parse_args.
@@ -409,38 +431,53 @@ reconcile::render_memory_block() {
     local spec_dir="$4"
     local feature_branch="$5"
 
-    local current_branch worktree_lines worktree_csv last_touched github_url
+    local current_branch worktree_lines worktree_cell last_touched_cell source_cell
 
     current_branch="$(git_helpers::current_branch || true)"
 
-    # Build a comma-separated list of worktree paths that currently
-    # hold the spec's feature branch. Falls back to the current
-    # working directory if no worktree maps to the feature branch
-    # (which would be the case from a `main` worktree). The memory
-    # block is informational — we never let absence of a worktree
-    # blow up the reconcile.
+    # Build a "; "-joined list of worktree paths that currently hold
+    # the spec's feature branch. A single path is the common case
+    # (git enforces uniqueness per branch); we defensively handle
+    # multi-line input by joining with "; " so the table cell stays
+    # on a single line. Falls back to a human note if no worktree
+    # maps to the feature branch (e.g. running from a main worktree).
     worktree_lines="$(git_helpers::worktree_for_branch "$feature_branch" || true)"
     if [[ -z "$worktree_lines" ]]; then
-        worktree_csv="(no worktree currently on ${feature_branch})"
+        worktree_cell="\`(no worktree currently on ${feature_branch})\`"
     else
-        # Single path expected (git enforces uniqueness), but normalise
-        # multi-line input defensively.
-        worktree_csv="$(printf '%s' "$worktree_lines" | tr '\n' ',' | sed 's/,$//')"
+        # Join newline-separated paths with "; " inside a code-span.
+        local joined
+        joined="$(printf '%s' "$worktree_lines" | tr '\n' ';' | sed 's/;$//' | sed 's/;/; /g')"
+        worktree_cell="\`${joined}\`"
     fi
 
+    # Last-touched: `<timestamp> by <operator email>`. If we can't
+    # read the disk mtime, label as "unknown". If the operator email
+    # is empty (config not yet populated), drop the `by …` suffix
+    # gracefully so the cell still renders cleanly.
+    local last_touched operator_email
     last_touched="$(git_helpers::last_touched "$spec_dir" || true)"
     if [[ -z "$last_touched" ]]; then
         last_touched="unknown"
+    fi
+    operator_email="$(config::get_operator_email 2>/dev/null || true)"
+    if [[ -n "$operator_email" ]]; then
+        last_touched_cell="${last_touched} by \`${operator_email}\`"
+    else
+        last_touched_cell="${last_touched}"
     fi
 
     # GitHub source URL — best-effort. We use `git remote get-url origin`
     # and rewrite the SSH form to https. If neither works we fall back to
     # a repo-relative path so the operator at least knows WHERE on disk
-    # to look.
-    local remote_url=""
+    # to look. The cell renders as a "GitHub →" link rather than the
+    # bare URL.
+    local remote_url="" github_url=""
     if remote_url="$(git remote get-url origin 2>/dev/null)"; then
         # git@github.com:owner/repo.git → https://github.com/owner/repo
         if [[ "$remote_url" =~ ^git@([^:]+):(.+)\.git$ ]]; then
+            remote_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        elif [[ "$remote_url" =~ ^ssh://git@([^/]+)/(.+)\.git$ ]]; then
             remote_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
         elif [[ "$remote_url" =~ ^https?://(.+)\.git$ ]]; then
             remote_url="https://${BASH_REMATCH[1]}"
@@ -450,8 +487,11 @@ reconcile::render_memory_block() {
         github_url="${remote_url}/tree/${current_branch}/${spec_dir}"
     elif [[ -n "$remote_url" ]]; then
         github_url="${remote_url}/tree/HEAD/${spec_dir}"
+    fi
+    if [[ -n "$github_url" ]]; then
+        source_cell="[GitHub →](${github_url})"
     else
-        github_url="(local: ${spec_dir})"
+        source_cell="\`(local: ${spec_dir})\`"
     fi
 
     # Title-case the lifecycle phase for human display.
@@ -462,44 +502,107 @@ reconcile::render_memory_block() {
         *)              phase_display="$(printf '%s' "$lifecycle_phase" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')" ;;
     esac
 
+    # Markdown table — fixed column order (Field / Value). Begin/end
+    # fence markers are added by the caller (compose_issue_description).
     cat <<EOF
-**Phase**: ${phase_display}
-**Branch**: \`${feature_branch}\`
-**Worktree(s)**: \`${worktree_csv}\`
-**Last touched (disk)**: ${last_touched}
-**Source**: ${github_url}
-**Spec**: ${feature_number}-${short_name}
+| Field | Value |
+|---|---|
+| **Phase** | ${phase_display} |
+| **Branch** | \`${feature_branch}\` |
+| **Worktree(s)** | ${worktree_cell} |
+| **Last touched** | ${last_touched_cell} |
+| **Source** | ${source_cell} |
+| **Spec** | ${feature_number}-${short_name} |
 EOF
 }
 
 # =============================================================================
-# reconcile::compose_issue_description <body_text> <memory_block>
+# reconcile::render_diagrams_block
 #
-# Merge the bridge's memory block into the spec Issue's description.
-# Strategy: locate the fenced markers; if present, replace everything
-# between them. If absent, prepend a fresh block to <body_text>.
-# Operator-added content outside the fences is preserved verbatim
-# (FR-004).
+# Build the markdown body for the spec Issue's `## Diagrams` block —
+# four bullet pointers at the consumer repo's README anchors. The
+# returned content does NOT include the begin/end fences; the caller
+# (compose_issue_description) wraps it.
+#
+# The base URL is derived from `git remote get-url origin` and the
+# usual SSH-→-HTTPS rewrite. If the consumer repo's remote isn't
+# GitHub-shaped, the function echoes nothing (empty stdout) and the
+# caller treats that as "skip the diagrams block entirely". A summary
+# warning is emitted on first miss so the operator knows why the
+# block is missing rather than silently losing it.
+# =============================================================================
+reconcile::render_diagrams_block() {
+    local remote_url="" base_url=""
+    if remote_url="$(git remote get-url origin 2>/dev/null)"; then
+        if [[ "$remote_url" =~ ^git@([^:]+):(.+)\.git$ ]]; then
+            base_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        elif [[ "$remote_url" =~ ^ssh://git@([^/]+)/(.+)\.git$ ]]; then
+            base_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        elif [[ "$remote_url" =~ ^https?://(.+)\.git$ ]]; then
+            base_url="https://${BASH_REMATCH[1]}"
+        elif [[ "$remote_url" =~ ^https?://github\.com/.+ ]]; then
+            # Already an https URL without the trailing .git.
+            base_url="$remote_url"
+        fi
+    fi
+
+    if [[ -z "$base_url" || "$base_url" != *github.com* ]]; then
+        # Not a GitHub URL — bail with no output. The caller skips the
+        # block. We surface one warning per reconcile run so the
+        # operator knows the diagrams pointer was deliberately omitted.
+        if (( _RECONCILE_DIAGRAMS_WARNED == 0 )); then
+            summary::add warned "diagrams block skipped: \`git remote get-url origin\` did not resolve to a github.com URL"
+            _RECONCILE_DIAGRAMS_WARNED=1
+        fi
+        return 0
+    fi
+
+    cat <<EOF
+## Diagrams
+
+Visual references in the repo's README:
+
+- [How sync works](${base_url}#how-sync-works) — the everyday case / PR merge / escape hatches
+- [Data model](${base_url}#data-model) — structural hierarchy + content mapping
+- [Phase mapping](${base_url}#phase-mapping) — lifecycle state transitions
+- [Write authority across worktrees](${base_url}#write-authority-across-worktrees) — read vs write rules
+EOF
+}
+
+# =============================================================================
+# reconcile::compose_issue_description <body_text> <memory_block> [<diagrams_block>]
+#
+# Merge the bridge's memory + diagrams blocks into the spec Issue's
+# description. Strategy: for each fence family, if both markers exist
+# in <body_text>, splice between them; otherwise prepend a fresh
+# fenced block to the head of the description. Operator-added prose
+# outside the fences is preserved verbatim (FR-004).
+#
+# <diagrams_block> may be empty — when the consumer repo isn't on
+# GitHub, render_diagrams_block returns no content and the caller
+# omits the diagrams fence entirely.
 # =============================================================================
 reconcile::compose_issue_description() {
     local body="$1"
     local memory_block="$2"
+    local diagrams_block="${3:-}"
 
-    # The full block we want to emit, fences included.
-    local fenced
-    fenced=$(printf '%s\n%s\n%s' \
+    # The full memory block we want to emit, fences included.
+    local memory_fenced
+    memory_fenced=$(printf '%s\n%s\n%s' \
         "${RECONCILE_MEMORY_BEGIN}" \
         "${memory_block}" \
         "${RECONCILE_MEMORY_END}")
 
-    # If both fences exist, splice. We use awk for the splice because
-    # bash parameter expansion can't easily handle multi-line markers.
-    if printf '%s' "$body" | grep -qF "${RECONCILE_MEMORY_BEGIN}" \
-        && printf '%s' "$body" | grep -qF "${RECONCILE_MEMORY_END}"; then
-        printf '%s' "$body" | awk \
+    local result="$body"
+
+    # ---- memory block splice ------------------------------------------
+    if printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_BEGIN}" \
+        && printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_END}"; then
+        result="$(printf '%s' "$result" | awk \
             -v begin="${RECONCILE_MEMORY_BEGIN}" \
             -v end="${RECONCILE_MEMORY_END}" \
-            -v block="${fenced}" '
+            -v block="${memory_fenced}" '
             BEGIN { skip = 0; printed = 0 }
             {
                 if (skip == 0 && index($0, begin) > 0) {
@@ -512,12 +615,70 @@ reconcile::compose_issue_description() {
                     next
                 }
                 print
-            }'
-        return 0
+            }')"
+    else
+        # No fences yet — prepend.
+        result="$(printf '%s\n\n%s' "$memory_fenced" "$result")"
     fi
 
-    # No fences yet — prepend the block and an empty separator line.
-    printf '%s\n\n%s' "$fenced" "$body"
+    # ---- diagrams block splice (optional) -----------------------------
+    if [[ -n "$diagrams_block" ]]; then
+        local diagrams_fenced
+        diagrams_fenced=$(printf '%s\n%s\n%s' \
+            "${RECONCILE_DIAGRAMS_BEGIN}" \
+            "${diagrams_block}" \
+            "${RECONCILE_DIAGRAMS_END}")
+
+        if printf '%s' "$result" | grep -qF "${RECONCILE_DIAGRAMS_BEGIN}" \
+            && printf '%s' "$result" | grep -qF "${RECONCILE_DIAGRAMS_END}"; then
+            result="$(printf '%s' "$result" | awk \
+                -v begin="${RECONCILE_DIAGRAMS_BEGIN}" \
+                -v end="${RECONCILE_DIAGRAMS_END}" \
+                -v block="${diagrams_fenced}" '
+                BEGIN { skip = 0; printed = 0 }
+                {
+                    if (skip == 0 && index($0, begin) > 0) {
+                        skip = 1
+                        if (printed == 0) { print block; printed = 1 }
+                        next
+                    }
+                    if (skip == 1) {
+                        if (index($0, end) > 0) { skip = 0 }
+                        next
+                    }
+                    print
+                }')"
+        else
+            # Append the diagrams block AFTER the memory block / body
+            # so the reader sees: memory fence → operator prose →
+            # diagrams pointer. Inserting after the memory end fence
+            # keeps the visual order stable across re-runs.
+            if printf '%s' "$result" | grep -qF "${RECONCILE_MEMORY_END}"; then
+                result="$(printf '%s' "$result" | awk \
+                    -v end="${RECONCILE_MEMORY_END}" \
+                    -v block="${diagrams_fenced}" '
+                    BEGIN { inserted = 0 }
+                    {
+                        print
+                        if (inserted == 0 && index($0, end) > 0) {
+                            print ""
+                            print block
+                            inserted = 1
+                        }
+                    }
+                    END {
+                        if (inserted == 0) {
+                            print ""
+                            print block
+                        }
+                    }')"
+            else
+                result="$(printf '%s\n\n%s' "$result" "$diagrams_fenced")"
+            fi
+        fi
+    fi
+
+    printf '%s' "$result"
 }
 
 # =============================================================================
@@ -1192,11 +1353,12 @@ reconcile::sync_spec_issue() {
 
     local title="${feature_number}-${short_name}"
 
-    # Compose the memory block + spec.md overview into a final body.
-    local memory_block existing_body
+    # Compose the memory + diagrams blocks into a final body.
+    local memory_block diagrams_block existing_body
     memory_block="$(reconcile::render_memory_block \
         "$feature_number" "$short_name" "$lifecycle_phase" \
         "$spec_dir" "$feature_branch")"
+    diagrams_block="$(reconcile::render_diagrams_block)"
 
     # Locate the existing spec Issue (FR-004b).
     local nodes
@@ -1211,7 +1373,7 @@ reconcile::sync_spec_issue() {
         existing_body=""
         local description
         description="$(reconcile::compose_issue_description \
-            "$existing_body" "$memory_block")"
+            "$existing_body" "$memory_block" "$diagrams_block")"
 
         # Linear's IssueCreateInput requires `labelIds: [String!]`
         # (UUIDs) — names are rejected on the raw GraphQL path. We
@@ -1308,11 +1470,11 @@ reconcile::sync_spec_issue() {
     current_labels="$(printf '%s' "$current_response" \
         | jq -c '[.data.issue.labels.nodes[].name]')"
 
-    # Compute the desired description by splicing the new memory block
-    # into whatever the operator has placed around it.
+    # Compute the desired description by splicing the new memory +
+    # diagrams blocks into whatever the operator has placed around them.
     local desired_description
     desired_description="$(reconcile::compose_issue_description \
-        "$current_description" "$memory_block")"
+        "$current_description" "$memory_block" "$diagrams_block")"
 
     # Compute the desired label set: preserve operator-added labels,
     # add (or keep) spec_label + phase_label, remove any stale phase:*
@@ -1864,8 +2026,248 @@ reconcile::process_spec() {
     # --- 4g. Clarify session comments (FR-008, FR-015) ----------------
     reconcile::sync_clarify_comments "$spec_issue_id" "$spec_dir" || true
 
+    # --- 4h. Record lifecycle for FR-002 Project Status aggregate ----
+    # We only record for authoritative writers; read-only worktrees
+    # take the early-return above and do not influence Project Status
+    # decisions (matches Principle IV write-authority semantics).
+    reconcile::_record_lifecycle "$lifecycle_phase" "$spec_dir"
+
     reconcile::log "spec ${feature_number}: reconcile complete"
     return 0
+}
+
+# =============================================================================
+# FR-002 — Project Status sync.
+#
+# After every per-spec reconcile lands, aggregate the lifecycle phases
+# observed across the touched specs and flip the consumer-repo Linear
+# Project's Status enum to match:
+#
+#   * Any spec in a `started`-type lifecycle phase (clarifying →
+#     analyzing inclusive — Specifying is `unstarted` per the seed
+#     catalogue) → state=`started`.
+#   * ALL specs in `merged` → state=`completed`.
+#   * ALL specs in `merged` AND every spec's mtime older than
+#     `sync.idle_window_days` (default 30) → state=`paused`.
+#   * Otherwise the Project's existing state is left untouched —
+#     we only flip on positive signal so a fresh repo with one
+#     unstarted spec doesn't accidentally promote past `planned`.
+#   * `cancelled` is never touched by the bridge.
+#
+# Zero-churn discipline: query the Project's current status first;
+# skip the `projectUpdate` if the desired state already matches.
+# Failure is best-effort — Project Status is aggregate sugar (per
+# contracts §4.2) so a transport blip aggregates as a warning rather
+# than blocking the per-spec writes that already settled.
+#
+# Linear's GraphQL surface for Project Status: `projectStatuses` enumerates
+# workspace-scoped status records keyed by `type` ∈ {backlog, planned,
+# started, paused, completed, canceled}. The bridge picks the FIRST
+# matching status per type — workspaces with multiple `started`
+# statuses (rare) get the alphabetically-first one.
+# =============================================================================
+
+# reconcile::_idle_window_days
+#   Echo the configured sync.idle_window_days as an integer. Falls back
+#   to the documented default of 30 when the key is absent or malformed.
+reconcile::_idle_window_days() {
+    local raw="${CONFIG_VALUES[sync.idle_window_days]:-}"
+    if [[ "$raw" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$raw"
+    else
+        printf '30\n'
+    fi
+}
+
+# reconcile::_lifecycle_is_started <phase>
+#   Return 0 if <phase> is one of the `started`-type lifecycle phases.
+#   Mirrors the seed catalogue in seed.sh SEED_WORKFLOW_STATES so the
+#   bridge never has to query Linear for the type. specifying is
+#   intentionally treated as NOT started so a brand-new repo with one
+#   freshly-minted spec doesn't accidentally promote the Project
+#   past planned (matches the "only flip on positive signal" rule).
+reconcile::_lifecycle_is_started() {
+    case "$1" in
+        clarifying|planning|tasking|red_team|implementing|analyzing|ready_to_merge)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+# reconcile::_record_lifecycle <phase> <spec_dir>
+#   Append one row to _RECONCILE_LIFECYCLE_ROWS for FR-002's
+#   project-status decision. Captures (phase, last-touched-epoch).
+#   Tolerant of unreadable mtimes — epoch is "0" in that case which
+#   means "treat as recently touched" (safer default than "ancient").
+reconcile::_record_lifecycle() {
+    local phase="$1"
+    local spec_dir="$2"
+    local epoch=""
+    # Pull a numeric epoch using the same GNU/BSD stat dance as
+    # git_helpers::last_touched. We don't reuse that helper here
+    # because it returns an ISO string; we need the raw seconds for
+    # the idle-window math.
+    if epoch="$(stat -c %Y "$spec_dir" 2>/dev/null)"; then
+        :
+    elif epoch="$(stat -f %m "$spec_dir" 2>/dev/null)"; then
+        :
+    else
+        epoch="0"
+    fi
+    if [[ -z "$epoch" || ! "$epoch" =~ ^[0-9]+$ ]]; then
+        epoch="0"
+    fi
+    if [[ -z "$_RECONCILE_LIFECYCLE_ROWS" ]]; then
+        _RECONCILE_LIFECYCLE_ROWS="${phase}"$'\t'"${epoch}"
+    else
+        _RECONCILE_LIFECYCLE_ROWS="${_RECONCILE_LIFECYCLE_ROWS}"$'\n'"${phase}"$'\t'"${epoch}"
+    fi
+}
+
+# reconcile::_desired_project_state
+#   Echo one of `started`, `completed`, `paused`, or empty (leave
+#   alone) based on the aggregated lifecycle rows. Implements the
+#   FR-002 priority order: any started → started; all merged + idle →
+#   paused; all merged → completed; nothing else flips.
+reconcile::_desired_project_state() {
+    if [[ -z "$_RECONCILE_LIFECYCLE_ROWS" ]]; then
+        printf ''
+        return 0
+    fi
+
+    local idle_days idle_window_secs now
+    idle_days="$(reconcile::_idle_window_days)"
+    idle_window_secs=$(( idle_days * 86400 ))
+    now="$(date +%s 2>/dev/null || printf '0')"
+
+    local any_started=0 all_merged=1 all_idle=1
+    local row phase epoch
+    while IFS=$'\t' read -r phase epoch; do
+        [[ -n "$phase" ]] || continue
+        if reconcile::_lifecycle_is_started "$phase"; then
+            any_started=1
+        fi
+        if [[ "$phase" != "merged" ]]; then
+            all_merged=0
+        fi
+        # Idle = mtime older than the window. Epoch 0 (couldn't read
+        # stat) is treated as "recent" so we don't accidentally
+        # auto-pause a repo whose filesystem we can't probe.
+        if (( epoch == 0 )) || (( idle_window_secs <= 0 )) \
+            || (( (now - epoch) < idle_window_secs )); then
+            all_idle=0
+        fi
+        row=""  # silence shellcheck unused-var on the loop var
+        : "${row}"
+    done <<< "$_RECONCILE_LIFECYCLE_ROWS"
+
+    if (( any_started == 1 )); then
+        printf 'started\n'
+    elif (( all_merged == 1 )) && (( all_idle == 1 )); then
+        printf 'paused\n'
+    elif (( all_merged == 1 )); then
+        printf 'completed\n'
+    else
+        # No positive signal — leave the Project's existing state alone.
+        printf ''
+    fi
+}
+
+# reconcile::sync_project_status
+#   Compute the desired Project Status from the per-spec lifecycle
+#   accumulator and flip the Linear Project's status via projectUpdate
+#   if (and only if) the current state doesn't already match. All
+#   failure modes aggregate as warnings — FR-002 is aggregate sugar
+#   and must not block the per-spec writes that already settled.
+reconcile::sync_project_status() {
+    local desired
+    desired="$(reconcile::_desired_project_state)"
+
+    if [[ -z "$desired" ]]; then
+        reconcile::log "FR-002 Project Status: no positive signal across touched specs; leaving as-is"
+        return 0
+    fi
+
+    local project_uuid
+    project_uuid="$(config::get_project_id)"
+    if [[ -z "$project_uuid" ]]; then
+        summary::add warned "FR-002 Project Status: linear.project.id absent; skipping projectUpdate"
+        return 0
+    fi
+
+    # Query the current status + workspace status palette in one round-trip.
+    # Linear's Project schema exposes `status { id name type }` and the
+    # workspace's full palette via `projectStatuses { nodes { id name type } }`.
+    local query='query GetProjectStatus($id: String!) {
+        project(id: $id) {
+            id
+            name
+            status { id name type }
+        }
+        projectStatuses {
+            nodes { id name type }
+        }
+    }'
+    local vars response
+    vars="$(jq -nc --arg id "$project_uuid" '{id: $id}')"
+
+    if ! response="$(graphql::query "$query" "$vars" 2>/dev/null)"; then
+        summary::add warned "FR-002 Project Status: projectStatuses query failed (transport); skipping flip"
+        return 0
+    fi
+
+    local current_type target_status_id
+    current_type="$(printf '%s' "$response" | jq -r '.data.project.status.type // ""')"
+    # Resolve the target status UUID — pick the first status whose
+    # type matches the desired flag. Multi-status-per-type workspaces
+    # (rare) get the alphabetically-first match.
+    target_status_id="$(printf '%s' "$response" | jq -r \
+        --arg type "$desired" \
+        '.data.projectStatuses.nodes
+         | map(select(.type == $type))
+         | sort_by(.name)
+         | (.[0].id // "")')"
+
+    if [[ -z "$target_status_id" ]]; then
+        summary::add warned "FR-002 Project Status: no projectStatus with type='${desired}' found in workspace; skipping flip"
+        return 0
+    fi
+
+    if [[ "$current_type" == "$desired" ]]; then
+        reconcile::log "FR-002 Project Status: already '${desired}' (zero-churn)"
+        return 0
+    fi
+
+    if (( ARG_DRY_RUN == 1 )); then
+        reconcile::log "DRY-RUN projectUpdate id=${project_uuid} statusId=${target_status_id} (type=${desired})"
+        summary::add updated "projectUpdate Status → ${desired} (dry-run)"
+        return 0
+    fi
+
+    local mutation='mutation FlipProjectStatus($id: String!, $input: ProjectUpdateInput!) {
+        projectUpdate(id: $id, input: $input) {
+            success
+            project { id name status { id name type } }
+        }
+    }'
+    local input_json mvars mresponse
+    input_json="$(jq -nc --arg status "$target_status_id" '{statusId: $status}')"
+    mvars="$(jq -nc --arg id "$project_uuid" --argjson input "$input_json" \
+        '{id: $id, input: $input}')"
+
+    if ! mresponse="$(graphql::mutate "$mutation" "$mvars" 2>/dev/null)"; then
+        summary::add warned "FR-002 Project Status: projectUpdate failed (transport); leaving Status unchanged"
+        return 0
+    fi
+
+    if ! printf '%s' "$mresponse" | jq -e '.data.projectUpdate.success == true' >/dev/null 2>&1; then
+        summary::add warned "FR-002 Project Status: projectUpdate did not return success=true"
+        return 0
+    fi
+
+    summary::add updated "projectUpdate Status: ${current_type:-unknown} → ${desired}"
+    reconcile::log "FR-002 Project Status: flipped ${current_type:-unknown} → ${desired}"
 }
 
 # =============================================================================
@@ -1912,6 +2314,12 @@ reconcile::main() {
     for spec_dir in "${spec_dirs[@]}"; do
         reconcile::process_spec "$spec_dir"
     done
+
+    # Step 4b — FR-002 Project Status flip. Runs after all per-spec
+    # mutations land so the aggregate reflects the freshest filesystem
+    # state. Failure here is best-effort; aggregated as warning rather
+    # than blocking the per-spec writes.
+    reconcile::sync_project_status || true
 
     # Step 5 — summary emission (Principle VIII).
     summary::emit

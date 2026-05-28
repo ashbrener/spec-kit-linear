@@ -143,6 +143,13 @@ INSTALL_OPERATOR_USER_ID=""
 INSTALL_OPERATOR_NAME=""
 INSTALL_OPERATOR_EMAIL=""
 
+# Project metadata captured by install::resolve_project_uuid when the
+# --auto-create / attach-existing path lands on a real Linear Project
+# (rather than the zero placeholder). The summary block surfaces the
+# URL so the operator can click straight through.
+INSTALL_RESOLVED_PROJECT_URL=""
+INSTALL_RESOLVED_PROJECT_NAME=""
+
 # -----------------------------------------------------------------------------
 # install::_log_info / install::_log_warn / install::_log_error
 #
@@ -751,26 +758,123 @@ install::resolve_team_uuid() {
     printf '%s\n' "$team_uuid"
 }
 
+# install::_find_existing_project <team_uuid> <project_name>
+#
+# Query the Linear team for an existing Project whose name matches
+# <project_name> exactly. Echoes a JSON array of `{id, name, url}`
+# nodes (possibly empty) on stdout. Halts the process via graphql::
+# on transport / auth failure — operator identity already passed in
+# install::resolve_operator above so a failure here is genuinely a
+# Linear-side problem worth surfacing.
+install::_find_existing_project() {
+    local team_uuid="$1"
+    local project_name="$2"
+
+    # shellcheck disable=SC2016
+    local query='query FindProjectByName($team: ID!, $name: String!) {
+        projects(filter: {
+            accessibleTeams: { id: { eq: $team } }
+            name: { eq: $name }
+        }, first: 10) {
+            nodes { id name url }
+        }
+    }'
+    local vars response
+    vars="$(jq -nc \
+        --arg team "$team_uuid" \
+        --arg name "$project_name" \
+        '{team: $team, name: $name}')"
+
+    if ! response="$(graphql::query "$query" "$vars" 2>/dev/null)"; then
+        # Network/auth failure — return empty array so the caller can
+        # continue with create. The graphql layer already surfaced
+        # diagnostics on the way up.
+        printf '[]\n'
+        return 0
+    fi
+    printf '%s' "$response" | jq -c '.data.projects.nodes // []'
+}
+
+# install::_create_project <team_uuid> <project_name>
+#
+# Issue a `projectCreate` mutation against the resolved team and echo
+# the newly-minted Project's `{id, name, url}` JSON. Halts (via
+# graphql::) on transport / mutation failure — this is the
+# happy-path target for --auto-create; failure here means the install
+# can't proceed past write_config so we surface immediately rather
+# than degrading.
+install::_create_project() {
+    local team_uuid="$1"
+    local project_name="$2"
+
+    # shellcheck disable=SC2016
+    local mutation='mutation InstallProjectCreate($input: ProjectCreateInput!) {
+        projectCreate(input: $input) {
+            success
+            project { id name url }
+        }
+    }'
+    local input_json vars response
+    input_json="$(jq -nc \
+        --arg name "$project_name" \
+        --arg team "$team_uuid" \
+        --arg description "Auto-created by speckit.linear.install for spec-kit lifecycle mirroring." \
+        '{
+            name: $name,
+            teamIds: [$team],
+            description: $description
+        }')"
+    vars="$(jq -nc --argjson input "$input_json" '{input: $input}')"
+
+    if ! response="$(graphql::mutate "$mutation" "$vars" 2>/dev/null)"; then
+        install::_die 1 \
+            "projectCreate '${project_name}' on team ${team_uuid} failed (transport). Re-run when Linear is reachable, or pass --project <UUID> to skip auto-create."
+    fi
+
+    if ! printf '%s' "$response" | jq -e '.data.projectCreate.success == true' >/dev/null 2>&1; then
+        install::_die 1 \
+            "projectCreate '${project_name}' did not return success=true; response: $(printf '%s' "$response" | jq -c '.errors // .data.projectCreate // .')"
+    fi
+
+    printf '%s' "$response" | jq -c '.data.projectCreate.project'
+}
+
+# install::resolve_project_uuid <team_uuid>
+#
+# Resolve the Linear Project UUID for the consumer repo. Precedence:
+#   1. --project <UUID> on the CLI (operator override).
+#   2. --auto-create: query for an existing Project on the team with
+#      the target name. If exactly one match exists, attach (skip
+#      create). If zero, mint a new Project via `projectCreate`. In
+#      --non-interactive mode an exact-name match auto-attaches; in
+#      interactive mode the operator is prompted (default: attach).
+#   3. Interactive picker (create / attach / rename).
+#
+# Echoes ONLY the resolved UUID on stdout. URL / friendly metadata is
+# stashed on module globals so write_config + the summary block can
+# pick them up without re-querying.
 install::resolve_project_uuid() {
+    local team_uuid="$1"
+
     if [[ -n "$INSTALL_FLAG_PROJECT" ]]; then
         printf '%s\n' "$INSTALL_FLAG_PROJECT"
         return 0
     fi
-    if (( INSTALL_FLAG_AUTO_CREATE == 1 )); then
-        # We defer the actual Linear `save_project` mutation to a future
-        # T077 dogfood pass; for now we surface a clear marker so the
-        # operator knows the install left a placeholder.
-        printf '00000000-0000-0000-0000-000000000000\n'
-        install::_log_warn "--auto-create requested; placeholder Project UUID written. Run /spec-kit-linear-install --project <UUID> after manually creating the Project in Linear, or wait for the T077 dogfood integration to land."
-        return 0
-    fi
-    if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
-        install::_die 2 "--non-interactive requires --project <UUID> or --auto-create"
-    fi
-    # Interactive Project picker — minimal stub.
+
     local repo_root repo_basename
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null || printf '')"
     repo_basename="$(basename "${repo_root:-$(pwd)}")"
+
+    if (( INSTALL_FLAG_AUTO_CREATE == 1 )); then
+        install::_auto_create_or_attach "$team_uuid" "$repo_basename"
+        return 0
+    fi
+
+    if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
+        install::_die 2 "--non-interactive requires --project <UUID> or --auto-create"
+    fi
+
+    # Interactive Project picker.
     printf '\n[linear] Where should this repo'\''s specs land in Linear?\n' >&2
     printf '         Create new Project "%s", attach to an existing one, or rename?\n' \
         "$repo_basename" >&2
@@ -784,13 +888,20 @@ install::resolve_project_uuid() {
     : "${choice:=create}"
 
     case "$choice" in
-        create|rename)
-            # Same path: we don't yet have the GraphQL plumbing to actually
-            # create the Project, so we emit a placeholder UUID and warn
-            # the operator that the next step is to re-run install with
-            # `--project <UUID>` once the Project exists in Linear.
-            printf '00000000-0000-0000-0000-000000000000\n'
-            install::_log_warn "Project creation deferred to T077 dogfood; placeholder UUID written. Re-run with --project <UUID> after creating the Project in Linear."
+        create)
+            install::_auto_create_or_attach "$team_uuid" "$repo_basename"
+            ;;
+        rename)
+            printf '         New Project name? ' >&2
+            local renamed=""
+            if ! IFS= read -r renamed; then
+                install::_die 2 "no input received for Project name"
+            fi
+            renamed="$(printf '%s' "$renamed" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+            if [[ -z "$renamed" ]]; then
+                install::_die 2 "Project name cannot be empty"
+            fi
+            install::_auto_create_or_attach "$team_uuid" "$renamed"
             ;;
         attach)
             printf '         Existing Linear Project UUID? ' >&2
@@ -808,6 +919,77 @@ install::resolve_project_uuid() {
             install::_die 2 "unknown Project choice: '$choice' (expected create/attach/rename)"
             ;;
     esac
+}
+
+# install::_auto_create_or_attach <team_uuid> <project_name>
+#
+# Shared body for both --auto-create and the interactive create/rename
+# paths. Pre-queries the team for an exact-name Project match:
+#   * 1 match → attach (and surface the URL).
+#   * 0 matches → projectCreate.
+#   * >1 matches → halt; ambiguous, refuse to auto-pick.
+# In --non-interactive mode a single existing match attaches silently
+# (otherwise the operator is prompted with [y/N], default attach).
+install::_auto_create_or_attach() {
+    local team_uuid="$1"
+    local project_name="$2"
+
+    local existing
+    existing="$(install::_find_existing_project "$team_uuid" "$project_name")"
+    local match_count
+    match_count="$(printf '%s' "$existing" | jq 'length')"
+
+    if [[ "$match_count" =~ ^[0-9]+$ ]] && (( match_count == 1 )); then
+        local existing_id existing_url
+        existing_id="$(printf '%s' "$existing" | jq -r '.[0].id')"
+        existing_url="$(printf '%s' "$existing" | jq -r '.[0].url // ""')"
+
+        local attach_choice="y"
+        if (( INSTALL_FLAG_NON_INTERACTIVE == 0 )); then
+            printf '\n[linear] Project "%s" already exists in this team — attach?\n' \
+                "$project_name" >&2
+            if [[ -n "$existing_url" ]]; then
+                printf '         URL: %s\n' "$existing_url" >&2
+            fi
+            printf '         [y/N] (default: y): ' >&2
+            if ! IFS= read -r attach_choice; then
+                attach_choice="y"
+            fi
+            attach_choice="${attach_choice,,}"
+            attach_choice="${attach_choice//[[:space:]]/}"
+            : "${attach_choice:=y}"
+        else
+            install::_log_info "--non-interactive: exactly one existing Project named '${project_name}' on team — auto-attaching"
+        fi
+
+        if [[ "$attach_choice" == "y" || "$attach_choice" == "yes" ]]; then
+            INSTALL_RESOLVED_PROJECT_URL="$existing_url"
+            INSTALL_RESOLVED_PROJECT_NAME="$project_name"
+            summary::add "skipped" "projectCreate '${project_name}' — existing Project attached (${existing_id})"
+            printf '%s\n' "$existing_id"
+            return 0
+        fi
+        # Operator declined attach — fall through to create. Linear
+        # allows duplicate names; we surface the situation as a warning.
+        install::_log_warn "Operator declined attach to existing '${project_name}'; creating a duplicate"
+    elif [[ "$match_count" =~ ^[0-9]+$ ]] && (( match_count > 1 )); then
+        install::_die 2 \
+            "found ${match_count} Projects named '${project_name}' on team ${team_uuid}; refusing to auto-pick. Pass --project <UUID> with the correct match."
+    fi
+
+    # 0 matches (or declined attach) → projectCreate.
+    local created
+    created="$(install::_create_project "$team_uuid" "$project_name")"
+    local new_id new_url
+    new_id="$(printf '%s' "$created" | jq -r '.id')"
+    new_url="$(printf '%s' "$created" | jq -r '.url // ""')"
+    INSTALL_RESOLVED_PROJECT_URL="$new_url"
+    INSTALL_RESOLVED_PROJECT_NAME="$project_name"
+    summary::add "created" "projectCreate '${project_name}' → ${new_id}"
+    if [[ -n "$new_url" ]]; then
+        install::_log_info "Created Linear Project: ${new_url}"
+    fi
+    printf '%s\n' "$new_id"
 }
 
 # =============================================================================
@@ -1225,56 +1407,74 @@ install::_render_hook_block() {
 # Insert the rendered block immediately after the named hook header,
 # before the next sibling hook or end-of-file. Preserves any existing
 # entries (e.g. speckit-git's `commit` entry under after_specify).
+#
+# Implementation note (BSD awk on macOS rejects multi-line `-v`
+# values — the dogfood run surfaced `awk: newline in string`):
+# rather than splice with awk -v block=, we use a pure-bash state
+# machine that walks the file line-by-line and emits the multi-line
+# <block_text> verbatim at the insertion point. Mirrors seed.sh's
+# write_config_uuids approach and keeps the awk dependency surface
+# limited to single-line variables.
 install::_append_under_hook() {
     local hook="$1"
     local block="$2"
     local tmp
     tmp="$(mktemp -t spec-kit-linear-ext-yml.XXXXXX)"
 
-    # Strategy: walk the file. On hitting the header line we copy it
-    # AND every line up to (and including) the last sub-entry of that
-    # block, then emit our new block, then continue copying.
-    awk -v hook="$hook" -v block="$block" '
-        BEGIN { state = "before"; emitted = 0 }
-        function flush_block() {
-            if (block_buf != "") {
-                printf "%s", block_buf
-            }
-            printf "%s\n", block
-            emitted = 1
-            block_buf = ""
-        }
-        {
-            if (state == "before") {
-                if ($0 ~ "^  " hook ":[[:space:]]*$") {
-                    print
-                    state = "in_hook"
-                    block_buf = ""
-                    next
-                }
-                print
-                next
-            }
-            if (state == "in_hook") {
-                # A new top-level hook header (two-space indent, key, colon).
-                if ($0 ~ /^  [a-zA-Z_]+:[[:space:]]*$/) {
-                    flush_block()
-                    print
-                    state = "after"
-                    next
-                }
-                block_buf = block_buf $0 "\n"
-                next
-            }
-            # state == "after"
-            print
-        }
-        END {
-            if (state == "in_hook" && emitted == 0) {
-                flush_block()
-            }
-        }
-    ' "$INSTALL_EXTENSIONS_YML" >"$tmp"
+    # Per-line state machine:
+    #   state="before"  — copy verbatim until we hit the hook header.
+    #   state="in_hook" — buffer every line of the hook's child block
+    #                     until we see the next sibling hook header
+    #                     (two-space indent + key + colon) or EOF.
+    #   state="after"   — copy the rest verbatim.
+    # On exit-from-in_hook (sibling header or EOF) we flush the
+    # buffered children, then printf the new block, then resume.
+    local state="before"
+    local -a block_buf=()
+    local emitted=0
+    local line
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$state" == "before" ]]; then
+            if [[ "$line" =~ ^[[:space:]]{2}${hook}:[[:space:]]*$ ]]; then
+                printf '%s\n' "$line" >>"$tmp"
+                state="in_hook"
+                block_buf=()
+                continue
+            fi
+            printf '%s\n' "$line" >>"$tmp"
+            continue
+        fi
+        if [[ "$state" == "in_hook" ]]; then
+            # Next sibling at the two-space hook indent — flush, emit, switch state.
+            if [[ "$line" =~ ^\ {2}[a-zA-Z_]+:[[:space:]]*$ ]]; then
+                local buf_line
+                for buf_line in "${block_buf[@]+"${block_buf[@]}"}"; do
+                    printf '%s\n' "$buf_line" >>"$tmp"
+                done
+                printf '%s\n' "$block" >>"$tmp"
+                emitted=1
+                printf '%s\n' "$line" >>"$tmp"
+                state="after"
+                continue
+            fi
+            block_buf+=("$line")
+            continue
+        fi
+        # state == "after"
+        printf '%s\n' "$line" >>"$tmp"
+    done < "$INSTALL_EXTENSIONS_YML"
+
+    # Drained the whole file while still inside the hook block — flush
+    # buffered children + emit the new block at EOF.
+    if [[ "$state" == "in_hook" ]] && (( emitted == 0 )); then
+        local buf_line
+        for buf_line in "${block_buf[@]+"${block_buf[@]}"}"; do
+            printf '%s\n' "$buf_line" >>"$tmp"
+        done
+        printf '%s\n' "$block" >>"$tmp"
+    fi
+
     mv "$tmp" "$INSTALL_EXTENSIONS_YML"
 }
 
@@ -1470,7 +1670,7 @@ install::main() {
     # ---- Step 2: resolve UUIDs (T041 / FR-002) -----------------------------
     local team_uuid project_uuid
     team_uuid="$(install::resolve_team_uuid)"
-    project_uuid="$(install::resolve_project_uuid)"
+    project_uuid="$(install::resolve_project_uuid "$team_uuid")"
 
     # ---- Step 2b: resolve operator identity (FR-034) -----------------------
     # Capture `viewer { id name email }` so the reconciler can pass
@@ -1501,6 +1701,12 @@ install::main() {
 
     # ---- Step 6: final summary + next-step pointer -------------------------
     {
+        if [[ -n "$INSTALL_RESOLVED_PROJECT_URL" ]]; then
+            printf '\n[linear] Project resolved: %s\n' "$INSTALL_RESOLVED_PROJECT_URL"
+            printf '         (name: %s, uuid: %s)\n' \
+                "${INSTALL_RESOLVED_PROJECT_NAME:-unknown}" \
+                "$project_uuid"
+        fi
         printf '\nNext steps:\n'
         printf '  1. Run /spec-kit-linear-seed to populate workflow_state_uuids.\n'
         printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
