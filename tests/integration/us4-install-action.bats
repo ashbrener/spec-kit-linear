@@ -35,6 +35,14 @@ setup() {
     integration::setup_bare_sandbox
     integration::install_gh_shim_no_pr
 
+    # T056/T063 alignment: the seed-state detector (install::prompt_seed_run)
+    # treats a missing or all-zero workflow_state_uuids map as unseeded and
+    # halts in --non-interactive mode per FR-022. Pre-populate the per-repo
+    # config with a fully-seeded UUID map so this test exercises the Action
+    # install path in isolation. A separate test (us4-seed-prompt.bats)
+    # covers the unseeded branches.
+    integration::_write_config_yaml > "$LINEAR_CONFIG_PATH"
+
     # ---- canned: list_teams returns the single sandbox team ----
     # FR-002: single-team workspaces auto-fill with no prompt.
     integration::stage_response 'query-ListTeams' \
@@ -58,7 +66,16 @@ setup() {
     integration::stage_response 'mutation' \
         '{"data":{"projectCreate":{"success":true,"project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"repo","state":"planned"}}}}'
 
-    integration::stage_response 'default' '{"data":{}}'
+    # ---- canned: viewer { id name email } for FR-034 operator capture ----
+    integration::stage_response 'query-Me' \
+        '{"data":{"viewer":{"id":"eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee","name":"Integration Tester","email":"integration@example.com"}}}'
+
+    # ---- canned: catchall returns viewer JSON so any unstaged query path
+    # (e.g. a workflow-state pre-check during T063 seed-state detection)
+    # still parses cleanly. The reconciler/install caller code paths
+    # under test are insensitive to the extra fields. ----
+    integration::stage_response 'default' \
+        '{"data":{"viewer":{"id":"eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee","name":"Integration Tester","email":"integration@example.com"}}}'
 }
 
 @test "T056: install --with-action drops workflow file + prints LINEAR_API_TOKEN provisioning line" {

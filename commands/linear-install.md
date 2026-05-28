@@ -61,12 +61,21 @@ available via `bash src/install.sh` directly.
 | `auto-create` | false | Create a new Linear Project named after the repo basename. Mutually exclusive with `project`. |
 | `team` | auto-detect / prompt | Linear Team UUID. Required if `non-interactive=true`. |
 | `non-interactive` | false | Refuse to prompt; require `project` (or `auto-create`) and `team` to be set on the CLI. Suitable for CI re-runs. |
-| `with-action` | false | Also drop `templates/github-action.yml` into `.github/workflows/spec-kit-linear-sync.yml` per FR-027, and surface the FR-029 secret-provisioning command. |
+| `with-action` | (interactive prompt) | Also drop `templates/github-action.yml` into `.github/workflows/spec-kit-linear-sync.yml` per FR-027, and surface the FR-029 secret-provisioning command. When neither `with-action` nor `no-action` is passed, interactive installs prompt the operator (T064); non-interactive runs default to install at the canonical path. |
+| `no-action` | false | Explicitly suppress the Layer E Action install (skips both the T064 prompt and any default install behaviour). |
 | `dev` | false | Install from the local spec-kit-linear checkout — used when the bridge is dogfooding its own repo (T077). |
 
 `project` and `auto-create` are mutually exclusive (passing both
 exits 2). `non-interactive` without one of them, or without `team`,
-also exits 2.
+also exits 2. `non-interactive` is also accepted as `--no-prompt` for
+parity with other speckit extensions.
+
+### Environment
+
+| Variable | Effect |
+|---|---|
+| `SPECKIT_LINEAR_DOGFOOD_SAFE` | When set to `1` / `true` / `yes` / `on`, the install proceeds in dogfood-safe mode (FR-033b). The dependency report and the final summary both surface a `dogfood-safe mode active` row so the operator can confirm at a glance the safety override is engaged. Use when installing the bridge into a repo whose Linear workspace already carries spec issues for this project (typical of dogfood-on-itself or reinstall-after-abort flows). The same variable also gates the auto-fire hooks the bridge registers (T048 — `condition: "${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}"`) so a single env var governs both install-time and hook-fire-time safety. |
+| `LINEAR_API_KEY` | Read from `.env` (or shell env) at install time so the FR-034 operator-identity resolver (`viewer { id name email }`) and the optional inline seed step (T063) can talk to Linear. Required for the seed-prompt accept path; the install halts with a clear remediation row if missing. |
 
 ## Algorithm (what the AI agent executes)
 
@@ -75,8 +84,9 @@ also exits 2.
    - `project=<UUID>` → `--project <UUID>`
    - `auto-create=true` → `--auto-create`
    - `team=<UUID>` → `--team <UUID>`
-   - `non-interactive=true` → `--non-interactive`
+   - `non-interactive=true` → `--non-interactive` (also `--no-prompt`)
    - `with-action=true` → `--with-action`
+   - `no-action=true` → `--no-action`
    - `dev=true` → `--dev`
 
 2. **Execute the install ceremony.** Shell out:
@@ -125,13 +135,42 @@ also exits 2.
      (`# >>> spec-kit-linear hook begin (FR-033) >>>`) onto the end of
      the existing hook rather than overwriting it. Re-installs are
      idempotent — the marker is the detection signal.
-   - When `--with-action` is set, copies
-     `templates/github-action.yml` into
-     `.github/workflows/spec-kit-linear-sync.yml` (preserves an
-     operator-customised file if one already exists). Surfaces the
-     `gh secret set LINEAR_API_TOKEN -R <owner>/<repo>` command per
-     FR-029. The bridge **does not** provision the secret on the
-     operator's behalf.
+   - **T063 — seed-state check (FR-022).** After resolving the Team
+     UUID and writing `linear-config.yml`, the install inspects
+     `linear.workflow_state_uuids`. If the map is absent or every
+     entry holds the placeholder zero-UUID, the workspace is
+     unseeded and the install prompts:
+     - **(default) Y** — invoke `src/seed.sh --team <UUID>` inline.
+       The same install invocation leaves a fully-seeded workspace
+       and the captured workflow-state UUIDs land in
+       `linear-config.yml`.
+     - **n / defer** — install completes; the structured summary
+       carries an FR-022 warning row and the Next-steps block
+       directs the operator to `/spec-kit-linear-seed` before the
+       first `/spec-kit-linear-push`.
+     In `--non-interactive` (or `--no-prompt`) mode the install
+     **halts** with the same FR-022 error rather than prompt, so CI
+     never silently leaves the workspace half-installed.
+   - **T064 — Action-install prompt (FR-027).** If neither
+     `--with-action` nor `--no-action` was passed on the CLI, the
+     install asks "Install GitHub Action layer? [Y/n]".
+     - **Y** — copies `templates/github-action.yml` into
+       `.github/workflows/spec-kit-linear-sync.yml`. Verifies the
+       template exists in `EXTENSION_ROOT/templates/`; surfaces an
+       error and bails (rather than silently degrading) when it
+       does not.
+     - **n** — skips the Action install; the operator can re-run
+       with `--with-action` to enable Layer E later.
+     Idempotent: if the workflow file already exists at the
+     destination, interactive runs prompt before overwrite;
+     `--non-interactive` runs preserve the existing file in place
+     and emit a corresponding log row. After install (regardless of
+     branch), the script surfaces the exact `gh secret set
+     LINEAR_API_TOKEN -R <owner>/<repo>` command per FR-029. The
+     bridge **does not** provision the secret on the operator's
+     behalf. In `--non-interactive` mode without an explicit flag,
+     the Action installs at the canonical path without prompting
+     (the operator opts out scripted-runs via `--no-action`).
 
 3. **Render the structured summary.** The script emits a
    `summary::emit` block to stderr at the end of every invocation
@@ -169,6 +208,16 @@ also exits 2.
    - `3` — transport failure. The MCP wiring step couldn't reach
      Linear / the operator's MCP host. Re-run when connectivity is
      restored.
+
+## End-to-end walkthrough
+
+The operator-facing prose for the full install ceremony — including
+sample console output for each of the dependency-report rows, the
+T063 seed prompt, and the T064 Action prompt — lives in
+[`quickstart.md`](../specs/001-spec-kit-linear-bridge/quickstart.md)
+§Step 1. That document is the source of truth for the operator UX;
+this command markdown deliberately documents only the algorithm the
+AI agent executes. When the two diverge, prefer `quickstart.md`.
 
 ## When this command fires
 
@@ -230,6 +279,25 @@ Selected named cases:
   itself; hook entries get a `${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}`
   condition marker so they don't auto-fire during the bridge's own
   development.
+- `dogfood-safe mode active (SPECKIT_LINEAR_DOGFOOD_SAFE=1)` —
+  warning. The operator set the FR-033b override so install
+  proceeded into a workspace that may already carry spec issues for
+  this project. Surfaced both in the dependency report (top of run)
+  and the final summary (bottom of run) so the override is
+  unambiguous.
+- `workspace unseeded; --non-interactive cannot prompt` — error.
+  T063 + FR-022: the workspace has placeholder zero-UUIDs for
+  `workflow_state_uuids` and the install can't ask. Fix: re-run
+  without `--non-interactive`, or run `bash src/seed.sh --team
+  <UUID>` first and then re-invoke install.
+- `workspace seed deferred; run /spec-kit-linear-seed before
+  /spec-kit-linear-push (FR-022)` — warning (not an error). The
+  operator chose `n` at the T063 prompt; install completed but
+  reconcile will halt until the seed runs.
+- `github-action template missing at <path>; cannot install Layer E`
+  — error (T064). The bridge's own checkout is incomplete; the
+  template should ship at `EXTENSION_ROOT/templates/github-action.yml`.
+  Fix: re-clone the bridge or pull a fresh release tag.
 
 ## Related commands
 

@@ -115,6 +115,11 @@ INSTALL_FLAG_TEAM=""
 INSTALL_FLAG_AUTO_CREATE=0
 INSTALL_FLAG_NON_INTERACTIVE=0
 INSTALL_FLAG_WITH_ACTION=0
+# Set when --with-action / --no-action are passed explicitly on the
+# CLI. When unset (=-1), install::main asks the operator interactively
+# per FR-027 (T064). Honoured only in interactive mode; non-interactive
+# defaults to install-without-prompt when --with-action is not set.
+INSTALL_FLAG_WITH_ACTION_EXPLICIT=0
 # Set by --dev. Surfaces in the dependency report and biases the
 # EXTENSION_ROOT lookup toward the current checkout (rather than the
 # operator-host `~/.specify-extensions/linear/` path the spec-kit CLI
@@ -123,6 +128,20 @@ INSTALL_FLAG_WITH_ACTION=0
 # knows they're running from a non-shipped tree.
 INSTALL_FLAG_DEV=0
 INSTALL_FLAG_HELP=0
+
+# T063 — seed-prompt outcome captured for the summary block.
+# 0 = no prompt issued (workspace already seeded or non-interactive halt path).
+# 1 = operator accepted; seed ran inline during install.
+# 2 = operator deferred; install completed but reconcile will halt per FR-022.
+INSTALL_SEED_PROMPT_RESULT=0
+
+# FR-033b — dogfood-safe mode. Set to 1 when the operator has exported
+# SPECKIT_LINEAR_DOGFOOD_SAFE=1 to opt into installing the extension
+# into a repo whose Linear workspace already carries spec issues for
+# this project. Surfaces in the dependency report and the final summary
+# so the operator can confirm at a glance that the safety override is
+# in effect.
+INSTALL_DOGFOOD_SAFE_MODE=0
 
 # Set to 1 once we've determined the repo is the spec-kit-linear repo
 # itself (T048 — dogfood guard). When set, the registered hooks are
@@ -212,14 +231,27 @@ OPTIONS
                        prompted (multi-team workspace).
   --non-interactive    Refuse to prompt; require --project (or
                        --auto-create) and --team to be set on the CLI.
+                       Also accepted as --no-prompt.
   --with-action        Drop templates/github-action.yml into
                        .github/workflows/spec-kit-linear-sync.yml and
                        print the gh secret set LINEAR_API_TOKEN command
-                       per FR-029.
+                       per FR-029. Without this flag (and without
+                       --no-action), interactive installs prompt the
+                       operator per T064.
+  --no-action          Explicitly skip the Layer E Action install
+                       (suppresses the interactive prompt).
   --dev                Install from this repo's local checkout rather
                        than via `specify extension add`. Used for
                        dogfood development.
   --help               Print this help and exit.
+
+ENVIRONMENT
+  SPECKIT_LINEAR_DOGFOOD_SAFE
+                       When set to `1` / `true` / `yes`, the install
+                       proceeds in dogfood-safe mode (FR-033b) even when
+                       the target workspace already carries spec issues
+                       for this project. Surfaces in the dependency
+                       report and the final summary.
 
 EXIT CODES (per contracts/command-shapes.md §5.6)
   0  Install complete; all required dependencies green.
@@ -279,12 +311,24 @@ install::parse_args() {
                 INSTALL_FLAG_AUTO_CREATE=1
                 shift
                 ;;
-            --non-interactive)
+            --non-interactive|--no-prompt)
+                # --no-prompt is an alias retained for parity with the
+                # speckit-git command surface (the test scaffolding and
+                # downstream automation reach for it interchangeably).
                 INSTALL_FLAG_NON_INTERACTIVE=1
                 shift
                 ;;
             --with-action)
                 INSTALL_FLAG_WITH_ACTION=1
+                INSTALL_FLAG_WITH_ACTION_EXPLICIT=1
+                shift
+                ;;
+            --no-action)
+                # Explicit opt-out so the interactive prompt (T064) is
+                # suppressed in scripted invocations that want install
+                # but no Layer E template.
+                INSTALL_FLAG_WITH_ACTION=0
+                INSTALL_FLAG_WITH_ACTION_EXPLICIT=1
                 shift
                 ;;
             --dev)
@@ -717,6 +761,36 @@ install::detect_dogfood_target() {
         && grep -q 'id: "linear"' "${repo_root}/extension.yml" 2>/dev/null; then
         INSTALL_DOGFOOD_DETECTED=1
     fi
+}
+
+# =============================================================================
+# FR-033b — dogfood-safe install override.
+#
+# Operators adopting the bridge into a repo whose Linear workspace
+# ALREADY carries spec issues for this project (typical of the
+# bridge's own dogfood cycle) need an explicit opt-in so install does
+# not assume the workspace is virgin. Setting
+# `SPECKIT_LINEAR_DOGFOOD_SAFE=1` in the environment toggles this
+# acknowledged-collision mode. The install must surface the flag in
+# its dependency report AND the final summary so the operator can see
+# at a glance that the safety override is engaged.
+#
+# The env var is also the legacy condition marker for the dogfood hook
+# guard (T048 / install::_render_hook_block) — same semantic surface;
+# the difference here is that the install-time check honours the value
+# as a one-shot install gate too.
+# =============================================================================
+
+install::detect_dogfood_safe_mode() {
+    local raw="${SPECKIT_LINEAR_DOGFOOD_SAFE:-}"
+    case "${raw,,}" in
+        1|true|yes|on)
+            INSTALL_DOGFOOD_SAFE_MODE=1
+            ;;
+        *)
+            INSTALL_DOGFOOD_SAFE_MODE=0
+            ;;
+    esac
 }
 
 # =============================================================================
@@ -1599,14 +1673,43 @@ install::install_github_action() {
     local template="${EXTENSION_ROOT}/templates/github-action.yml"
 
     if [[ ! -f "$template" ]]; then
-        install::_log_warn "github-action template missing at ${template}; skipping (T062 may still be in flight)"
-        return 0
+        # T064: per the contract, a missing template is an ERROR — the
+        # operator opted into Layer E and the bridge couldn't deliver.
+        # Surface loud, then bail so the summary block reflects the
+        # gap rather than silently degrading.
+        install::_log_error "github-action template missing at ${template}; cannot install Layer E"
+        summary::add "error" "github-action template missing at ${template} (FR-027)"
+        return 1
     fi
 
     mkdir -p "$INSTALL_GH_WORKFLOWS_DIR"
 
     if [[ -f "$INSTALL_GH_WORKFLOW_FILE" ]]; then
-        install::_log_info "${INSTALL_GH_WORKFLOW_FILE} already exists; preserving operator changes"
+        # T064: idempotent overwrite-protection. Interactive runs ask
+        # before clobbering an operator-customised workflow file;
+        # non-interactive runs always preserve in place (the operator
+        # can re-run with --with-action after manually deleting the
+        # file if they truly want a fresh copy).
+        local overwrite="n"
+        if (( INSTALL_FLAG_NON_INTERACTIVE == 0 )); then
+            printf '\n[linear] %s already exists. Overwrite? [y/N]: ' \
+                "$INSTALL_GH_WORKFLOW_FILE" >&2
+            if ! IFS= read -r overwrite; then
+                overwrite="n"
+            fi
+            overwrite="${overwrite,,}"
+            overwrite="${overwrite//[[:space:]]/}"
+            : "${overwrite:=n}"
+        else
+            install::_log_info "${INSTALL_GH_WORKFLOW_FILE} already exists; --non-interactive preserves operator changes"
+        fi
+
+        if [[ "$overwrite" == "y" || "$overwrite" == "yes" ]]; then
+            cp "$template" "$INSTALL_GH_WORKFLOW_FILE"
+            install::_log_info "overwrote ${INSTALL_GH_WORKFLOW_FILE} per operator confirmation"
+        else
+            install::_log_info "${INSTALL_GH_WORKFLOW_FILE} preserved; skipping copy"
+        fi
     else
         cp "$template" "$INSTALL_GH_WORKFLOW_FILE"
         install::_log_info "installed ${INSTALL_GH_WORKFLOW_FILE} (FR-027)"
@@ -1634,6 +1737,224 @@ install::install_github_action() {
 }
 
 # =============================================================================
+# T063 — Seeded-state detection + first-install seed prompt.
+#
+# Inspect the resolved consumer-repo linear-config.yml for the
+# `workflow_state_uuids` map. The workspace is considered "seeded"
+# when every key under that map carries a non-zero UUID (per the
+# FR-022 contract — placeholder zero-UUIDs signal an unseeded
+# workspace). If the map is absent or every entry holds the
+# placeholder zero-UUID, the install offers the operator three paths:
+#   (1) default: invoke `src/seed.sh` inline so the same install
+#       invocation leaves a fully-seeded workspace,
+#   (2) defer: complete install but warn that subsequent reconciles
+#       will halt per FR-022 until /spec-kit-linear-seed runs,
+#   (3) non-interactive: halt with the FR-022 error so CI does not
+#       silently leave an unseeded workspace.
+#
+# Returns 0 in all happy-path branches (including operator defer);
+# returns non-zero only when the inline seed itself failed in a way
+# that should fail the install too.
+# =============================================================================
+
+# install::_workspace_is_seeded <config-path>
+#   Echo nothing; exit 0 iff every workflow_state_uuids.* entry in the
+#   given config file is a non-zero UUID. Exit 1 if any entry is the
+#   placeholder zero-UUID or missing.
+install::_workspace_is_seeded() {
+    local config_path="$1"
+    if [[ ! -f "$config_path" ]]; then
+        return 1
+    fi
+    # Pull every quoted UUID under the workflow_state_uuids: block.
+    # If any of them is the zero placeholder, the workspace is
+    # unseeded. Same parser shape as install::_substitute_uuid_placeholder
+    # (awk state machine; no yq dep).
+    local zero_count
+    zero_count="$(awk '
+        BEGIN { in_block = 0; zero = 0 }
+        {
+            ltrim = $0
+            sub(/^[[:space:]]+/, "", ltrim)
+            if (ltrim == "workflow_state_uuids:") {
+                in_block = 1
+                next
+            }
+            if (in_block && $0 ~ /^[[:space:]]{0,2}[a-zA-Z_][a-zA-Z0-9_]*:[[:space:]]*$/ \
+                && $0 !~ /^[[:space:]]{4,}/) {
+                in_block = 0
+            }
+            if (in_block && $0 ~ /"00000000-0000-0000-0000-000000000000"/) {
+                zero += 1
+            }
+        }
+        END { print zero }
+    ' "$config_path")"
+
+    if [[ "$zero_count" =~ ^[0-9]+$ ]] && (( zero_count == 0 )); then
+        # Also require the key to exist at all — a config that omits
+        # workflow_state_uuids entirely is unseeded by definition.
+        if grep -qE '^[[:space:]]*workflow_state_uuids:[[:space:]]*$' "$config_path" 2>/dev/null; then
+            return 0
+        fi
+        return 1
+    fi
+    return 1
+}
+
+# install::prompt_seed_run <team_uuid>
+#   Detect whether the consumer repo's config has a populated
+#   workflow_state_uuids map. If not, route per the prompt-or-halt
+#   policy above. Always invoked AFTER write_config so the on-disk
+#   config the seed step reads carries the resolved team/project UUIDs.
+install::prompt_seed_run() {
+    local team_uuid="$1"
+
+    if install::_workspace_is_seeded "$INSTALL_CONFIG_PATH"; then
+        install::_log_info "workspace already seeded (workflow_state_uuids populated); skipping seed prompt"
+        summary::add "skipped" "workspace already seeded — no /spec-kit-linear-seed prompt issued"
+        return 0
+    fi
+
+    if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
+        # FR-022: non-interactive mode MUST NOT silently leave the
+        # workspace unseeded. Halt with the same diagnostic the
+        # reconciler would emit on first push so CI fails loud at
+        # install time rather than at first reconcile.
+        install::_log_error \
+            "workspace unseeded (workflow_state_uuids placeholder zero-UUIDs); --non-interactive cannot prompt"
+        install::_log_error \
+            "Run \`bash src/seed.sh --team ${team_uuid}\` (or /spec-kit-linear-seed) before invoking /spec-kit-linear-push (FR-022)"
+        summary::add "error" \
+            "workspace unseeded (FR-022); run /spec-kit-linear-seed before /spec-kit-linear-push"
+        INSTALL_SEED_PROMPT_RESULT=2
+        return 1
+    fi
+
+    # Interactive: prompt the operator. Default is RUN (Enter accepts).
+    printf '\n[linear] Linear workspace is unseeded for this repo (no workflow_state_uuids).\n' >&2
+    printf '         Run /spec-kit-linear-seed now? [Y/n] (default: Y, "n" defers per FR-022): ' >&2
+    local choice=""
+    if ! IFS= read -r choice; then
+        # No stdin (e.g. piped install with no answer) — treat as defer
+        # so we don't accidentally run seed against a workspace the
+        # operator hasn't reviewed.
+        choice="n"
+    fi
+    choice="${choice,,}"
+    choice="${choice//[[:space:]]/}"
+    : "${choice:=y}"
+
+    case "$choice" in
+        y|yes)
+            install::_log_info "operator accepted seed prompt; invoking src/seed.sh inline"
+            install::_run_seed_inline "$team_uuid"
+            return $?
+            ;;
+        n|no|defer)
+            install::_log_warn "operator deferred seed (FR-022): /spec-kit-linear-push will halt until /spec-kit-linear-seed runs"
+            summary::add "warned" \
+                "workspace seed deferred; run /spec-kit-linear-seed before /spec-kit-linear-push (FR-022)"
+            INSTALL_SEED_PROMPT_RESULT=2
+            return 0
+            ;;
+        *)
+            install::_log_warn "unknown seed-prompt choice '${choice}'; treating as defer (FR-022)"
+            summary::add "warned" \
+                "workspace seed deferred (unrecognised choice); run /spec-kit-linear-seed before /spec-kit-linear-push (FR-022)"
+            INSTALL_SEED_PROMPT_RESULT=2
+            return 0
+            ;;
+    esac
+}
+
+# install::_run_seed_inline <team_uuid>
+#   Invoke src/seed.sh inside this install invocation. Honours the
+#   operator's --dev flag (passes through SPECKIT_LINEAR_ROOT) and the
+#   resolved team UUID so the seed never has to re-resolve the config.
+#   Returns the seed's exit code, but the install's own exit code is
+#   computed by install::main from the summary aggregate so a seed
+#   failure surfaces as a hard error rather than silently dropping.
+install::_run_seed_inline() {
+    local team_uuid="$1"
+    local seed_sh="${EXTENSION_ROOT}/src/seed.sh"
+
+    if [[ ! -f "$seed_sh" ]]; then
+        install::_log_error "seed script missing at ${seed_sh}; cannot run inline"
+        summary::add "error" "src/seed.sh missing; cannot run inline seed"
+        INSTALL_SEED_PROMPT_RESULT=2
+        return 1
+    fi
+
+    install::_log_info "running ${seed_sh} --team ${team_uuid}"
+    if bash "$seed_sh" --team "$team_uuid"; then
+        install::_log_info "inline seed completed"
+        summary::add "created" "workspace seed completed inline (workflow_state_uuids populated)"
+        INSTALL_SEED_PROMPT_RESULT=1
+        return 0
+    fi
+    install::_log_error "inline seed failed; install will surface the error"
+    summary::add "error" "inline seed failed; re-run /spec-kit-linear-seed manually before /spec-kit-linear-push"
+    INSTALL_SEED_PROMPT_RESULT=2
+    return 1
+}
+
+# =============================================================================
+# T064 — Interactive Action installation prompt (FR-027).
+#
+# After Project UUID resolution + seed prompt, offer to drop the
+# Layer E workflow into `.github/workflows/spec-kit-linear-sync.yml`.
+# The prompt is suppressed when:
+#   * --with-action / --no-action was passed explicitly on the CLI
+#     (operator already chose), OR
+#   * --non-interactive is set (default: install at canonical path).
+# Honours operator-customised destinations via the idempotent
+# overwrite-protection in install::install_github_action.
+# =============================================================================
+
+install::maybe_prompt_action() {
+    if (( INSTALL_FLAG_WITH_ACTION_EXPLICIT == 1 )); then
+        # Operator already decided via --with-action / --no-action; nothing
+        # to ask. The eventual install::install_github_action call (or its
+        # omission) honours that.
+        return 0
+    fi
+
+    if (( INSTALL_FLAG_NON_INTERACTIVE == 1 )); then
+        # FR-027 + T064 contract: non-interactive runs install the Action
+        # at the default path WITHOUT prompting. Operators that don't
+        # want the Action in scripted invocations must pass --no-action.
+        install::_log_info "--non-interactive: defaulting to Action install (per T064 contract)"
+        INSTALL_FLAG_WITH_ACTION=1
+        return 0
+    fi
+
+    printf '\n[linear] Install GitHub Action layer? [Y/n] (default: Y): ' >&2
+    local choice=""
+    if ! IFS= read -r choice; then
+        choice="y"
+    fi
+    choice="${choice,,}"
+    choice="${choice//[[:space:]]/}"
+    : "${choice:=y}"
+
+    case "$choice" in
+        y|yes)
+            INSTALL_FLAG_WITH_ACTION=1
+            install::_log_info "operator accepted Action install prompt"
+            ;;
+        n|no)
+            INSTALL_FLAG_WITH_ACTION=0
+            install::_log_info "operator declined Action install; skipping Layer E"
+            ;;
+        *)
+            INSTALL_FLAG_WITH_ACTION=0
+            install::_log_warn "unknown Action-prompt choice '${choice}'; skipping Layer E (re-run with --with-action to install)"
+            ;;
+    esac
+}
+
+# =============================================================================
 # install::main — top-level dispatcher.
 # =============================================================================
 
@@ -1650,6 +1971,13 @@ install::main() {
     if (( INSTALL_FLAG_DEV == 1 )); then
         install::_log_info "--dev mode: installing from local checkout at ${EXTENSION_ROOT} (not the CLI-shipped extension tree)"
         summary::add "warned" "running in --dev mode; EXTENSION_ROOT=${EXTENSION_ROOT}"
+    fi
+
+    # ---- FR-033b: dogfood-safe acknowledgement (env var) -------------------
+    install::detect_dogfood_safe_mode
+    if (( INSTALL_DOGFOOD_SAFE_MODE == 1 )); then
+        install::_log_warn "SPECKIT_LINEAR_DOGFOOD_SAFE=1 — dogfood-safe install mode engaged (FR-033b)"
+        summary::add "warned" "dogfood-safe mode active (SPECKIT_LINEAR_DOGFOOD_SAFE=1): install proceeding into a workspace that may already have spec issues for this project (FR-033b)"
     fi
 
     # ---- Step 1: dependency report (T040 / FR-018b) ------------------------
@@ -1691,10 +2019,20 @@ install::main() {
     install::install_git_hooks
     summary::add "updated" "local git hooks installed under ${INSTALL_GIT_HOOKS_DIR}"
 
+    # ---- Step 4b: T063 — workspace seed-state check ------------------------
+    # Runs AFTER write_config (so the seed step sees the resolved team
+    # UUID inside linear-config.yml) and BEFORE the Action prompt so
+    # the operator can confirm both prompts back-to-back. We let a
+    # halt from prompt_seed_run propagate to install::main's exit
+    # code via summary::has_errors below.
+    install::prompt_seed_run "$team_uuid" || true
+
     # ---- Step 5: optional GitHub Action (FR-027 / FR-029) ------------------
+    install::maybe_prompt_action
     if (( INSTALL_FLAG_WITH_ACTION == 1 )); then
-        install::install_github_action
-        summary::add "created" "GitHub Action template at ${INSTALL_GH_WORKFLOW_FILE}"
+        if install::install_github_action; then
+            summary::add "created" "GitHub Action template at ${INSTALL_GH_WORKFLOW_FILE}"
+        fi
     else
         summary::add "skipped" "GitHub Action install (re-run with --with-action to enable Layer E)"
     fi
@@ -1707,10 +2045,28 @@ install::main() {
                 "${INSTALL_RESOLVED_PROJECT_NAME:-unknown}" \
                 "$project_uuid"
         fi
+        if (( INSTALL_DOGFOOD_SAFE_MODE == 1 )); then
+            printf '\n[linear] dogfood-safe mode is engaged (FR-033b).\n'
+            printf '         The install proceeded into a workspace that may already carry spec issues for this project.\n'
+        fi
         printf '\nNext steps:\n'
-        printf '  1. Run /spec-kit-linear-seed to populate workflow_state_uuids.\n'
-        printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
-        printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
+        case "$INSTALL_SEED_PROMPT_RESULT" in
+            1)
+                printf '  1. Seed completed inline — workflow_state_uuids populated.\n'
+                printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
+                printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
+                ;;
+            2)
+                printf '  1. Run /spec-kit-linear-seed before /spec-kit-linear-push (FR-022).\n'
+                printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
+                printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
+                ;;
+            *)
+                printf '  1. Workspace already seeded — skipping /spec-kit-linear-seed.\n'
+                printf '  2. Commit %s.\n' "$INSTALL_CONFIG_PATH"
+                printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
+                ;;
+        esac
     } >&2
 
     summary::emit

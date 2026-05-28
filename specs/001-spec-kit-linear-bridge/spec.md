@@ -670,6 +670,26 @@ intermediate phase transitions appearing in Linear's activity log.
   per-clone and re-runs as part of the dependency-verification
   contract in FR-018b.
 
+- **FR-033b**: The bridge MUST honour the `SPECKIT_LINEAR_DOGFOOD_SAFE`
+  environment variable as an explicit "dogfood-safe" install override.
+  When the variable is set to `1` (or `true` / `yes` / `on`), the
+  install ceremony MUST proceed even when the target Linear workspace
+  already carries spec issues for this project — the canonical
+  collision shape produced by the bridge dogfooding into its own
+  repo, by reinstalling against a workspace that was seeded against
+  the same Project UUID by an earlier checkout, or by an operator
+  rerunning install after a prior aborted attempt. The install MUST
+  detect the variable at startup, surface a "dogfood-safe mode
+  active" warning row in the FR-018b dependency report, and add a
+  corresponding entry to the final FR-023 summary block so the
+  operator can confirm at a glance that the safety override is
+  engaged. Absent the variable, behaviour is unchanged — the
+  install treats colliding spec issues with the same caution as any
+  other unexpected workspace state. Mirrors the existing
+  `${SPECKIT_LINEAR_DOGFOOD_SAFE:-false}` condition marker that
+  guards the bridge's own auto-fire hooks (T048) so a single env
+  var governs both install-time and hook-fire-time safety.
+
 ### Key Entities
 
 - **Consumer repo**: A git repository that has the bridge installed
