@@ -396,6 +396,20 @@ Selected named cases:
   — error (T064). The bridge's own checkout is incomplete; the
   template should ship at `EXTENSION_ROOT/templates/github-action.yml`.
   Fix: re-clone the bridge or pull a fresh release tag.
+- `source path equals target path` — error (FR-046). The operator
+  ran `bash src/install.sh --dev` from inside the bridge's own
+  checkout; the S0 self-install guard halts exit 2 before any
+  filesystem write per
+  [`install-flags.md`](../specs/002-install-ergonomics/contracts/install-flags.md)
+  §4. Fix: install into a different consumer repo (the documented
+  `--dev /path/to/spec-kit-linear` form from `README.md` runs from
+  the consumer-repo cwd, not from inside the bridge).
+- `vendored .git/ detected at <path>` — warning (FR-049). The
+  install source carries a `.git/` directory at
+  `.specify/extensions/linear/.git` — typical of spec-kit-CLI
+  `--dev` vendoring. Install proceeds; the next-steps block
+  surfaces the `rm -rf <path>` remediation. The bridge never
+  auto-deletes that directory (Principle VIII — operator consent).
 
 ## Related commands
 
@@ -443,3 +457,18 @@ This command implements (in whole or in part):
   GitHub Action).
 - **Principle VII** — re-runs preserve operator `enabled: false`
   edits on registered hooks.
+- **FR-046** — S0 self-install guard via
+  `install::detect_self_install` (`cd && pwd -P` canonicalisation,
+  no `realpath` dependency); halts exit 2 when SOURCE ==
+  TARGET. See
+  [`install-flags.md`](../specs/002-install-ergonomics/contracts/install-flags.md)
+  §4 for the verbatim message.
+- **FR-047** — operator-facing install commands documented in
+  [`README.md`](../README.md) §Install. The `--from
+  <archive-zip-URL>` form is the canonical pre-catalog path; the
+  `--dev <path>` form runs from a separate consumer repo (FR-046
+  bars source-equals-target).
+- **FR-049** — vendored `.git/` detection via
+  `install::detect_vendored_git`; warns in the dependency report
+  and the final summary's next-steps block, never auto-deletes
+  (Principle VIII).

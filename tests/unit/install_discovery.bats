@@ -910,3 +910,82 @@ _graphql_call_count() {
     [ "$status" -eq 2 ]
     [[ "$output" == *"viewer"* || "$output" == *"API key"* || "$output" == *"FR-034"* ]]
 }
+
+# =============================================================================
+# Phase 5 — User Story 3 (docs + safety guards) unit tests.
+#
+# T255 covers `install::detect_self_install` (FR-046 self-install guard)
+# via three @test blocks: source != target → exit 0, source == target →
+# exit 2, source == target via differing path representations (one
+# absolute, one with trailing slash) — verifies `pwd -P`
+# canonicalisation per plan.md A7.
+#
+# T256 covers `install::detect_vendored_git` (FR-049 vendored .git/
+# warning) via two @test blocks: no `.git/` present → no warning
+# emitted, `.git/` present → exactly one `summary::add warned` call
+# with the FR-049 remediation string.
+# =============================================================================
+
+@test "T255: install::detect_self_install returns 0 when source != target" {
+    _source_install_sh
+    local src_dir="${BATS_TEST_TMPDIR}/src-distinct"
+    local target_dir="${BATS_TEST_TMPDIR}/target-distinct"
+    mkdir -p "$src_dir" "$target_dir"
+    run install::detect_self_install "$src_dir" "$target_dir"
+    [ "$status" -eq 0 ]
+}
+
+@test "T255: install::detect_self_install exits 2 when source == target (identical paths)" {
+    _source_install_sh
+    local shared_dir="${BATS_TEST_TMPDIR}/shared-checkout"
+    mkdir -p "$shared_dir"
+    run install::detect_self_install "$shared_dir" "$shared_dir"
+    [ "$status" -eq 2 ]
+    # Verbatim FR-046 message from install-flags.md §4.
+    [[ "$output" == *"source path equals target path"* ]]
+    [[ "$output" == *"FR-046"* ]]
+}
+
+@test "T255: install::detect_self_install canonicalises via pwd -P (trailing slash + absolute variants)" {
+    # Plan.md A7: the guard uses `cd && pwd -P` rather than `realpath`.
+    # Two path representations of the SAME canonical directory MUST
+    # collide: one with a trailing slash, one without.
+    _source_install_sh
+    local shared_dir="${BATS_TEST_TMPDIR}/shared-canon"
+    mkdir -p "$shared_dir"
+    run install::detect_self_install "${shared_dir}/" "${shared_dir}"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"FR-046"* ]]
+}
+
+@test "T256: install::detect_vendored_git is silent when no .git/ is present" {
+    _source_install_sh
+    summary::start "phase-5 test"
+    local source_dir="${BATS_TEST_TMPDIR}/source-clean"
+    mkdir -p "${source_dir}/.specify/extensions/linear"
+    run install::detect_vendored_git "$source_dir"
+    [ "$status" -eq 0 ]
+    # No FR-049 warning row should have surfaced on stderr/stdout.
+    [[ ! "$output" == *"FR-049"* ]]
+    # And the summary's warned counter must still be zero.
+    [ "$(summary::count warned)" = "0" ]
+}
+
+@test "T256: install::detect_vendored_git emits exactly one warned row with remediation when .git/ present" {
+    _source_install_sh
+    summary::start "phase-5 test"
+    local source_dir="${BATS_TEST_TMPDIR}/source-vendored"
+    mkdir -p "${source_dir}/.specify/extensions/linear/.git"
+    run install::detect_vendored_git "$source_dir"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FR-049"* ]]
+    [[ "$output" == *"rm -rf"* ]]
+    [[ "$output" == *".specify/extensions/linear/.git"* ]]
+
+    # Direct (non-`run`) re-call so the side-effect counter survives
+    # into the test scope — `run` forks a subshell and the summary
+    # state would otherwise be lost.
+    summary::start "phase-5 test"
+    install::detect_vendored_git "$source_dir" 2>/dev/null
+    [ "$(summary::count warned)" = "1" ]
+}

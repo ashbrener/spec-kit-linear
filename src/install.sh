@@ -153,6 +153,16 @@ INSTALL_DOGFOOD_DETECTED=0
 # final exit code: any `✗` row → exit 2 per command-shapes.md §5.7.
 INSTALL_HAD_HARD_ERROR=0
 
+# Set to 1 by `install::detect_vendored_git` (T204 / FR-049) when the
+# install source carries a `.git/` directory at
+# `<source>/.specify/extensions/linear/.git`. Drives the Next-steps
+# remediation row per `install-prompts.md` §7 — the warning surfaces
+# at the dependency-report stage (T259) and is mirrored in the final
+# summary so the operator sees the remediation `rm -rf …` at both
+# top-of-run and bottom-of-run.
+INSTALL_VENDORED_GIT_DETECTED=0
+INSTALL_VENDORED_GIT_PATH=""
+
 # Operator identity resolved by install::resolve_operator (FR-034). The
 # bridge captures the authenticating Linear user's identity at install
 # time via the `viewer { id name email }` query and writes it to
@@ -774,6 +784,23 @@ install::run_dependency_report() {
 
     install::_section "Secrets / .env:"
     install::check_env_file
+
+    # ---- T259 / FR-049: vendored .git/ detection ---------------------------
+    # Surface a warning row when the install SOURCE
+    # (EXTENSION_ROOT — set near the top of this file) carries a
+    # `.git/` directory at `.specify/extensions/linear/.git`. The
+    # helper itself emits the row via `summary::add warned` +
+    # `install::_log_warn`; install continues per Principle VIII
+    # (operator consent — never auto-delete).
+    install::_section "Install source (FR-049):"
+    install::detect_vendored_git "$EXTENSION_ROOT"
+    if (( INSTALL_VENDORED_GIT_DETECTED == 1 )); then
+        printf '  ⚠ vendored .git/ at %s — remediation: rm -rf %s (FR-049)\n' \
+            "$INSTALL_VENDORED_GIT_PATH" \
+            "$INSTALL_VENDORED_GIT_PATH" >&2
+    else
+        printf '  ✓ install source clean — no vendored .git/ under .specify/extensions/linear/\n' >&2
+    fi
 
     if (( INSTALL_HAD_HARD_ERROR == 1 )); then
         printf '\nspec-kit-linear: install: dependency report has unresolved errors (✗ rows above).\n' >&2
@@ -2288,6 +2315,12 @@ install::detect_vendored_git() {
     local vendored_git="${source_path}/.specify/extensions/linear/.git"
 
     if [[ -d "$vendored_git" ]]; then
+        # Module-level flag drives the Next-steps remediation row that
+        # mirrors this warning at the bottom of the run per T259 +
+        # install-prompts.md §7. The path is captured so the summary
+        # row points at the same `rm -rf …` target.
+        INSTALL_VENDORED_GIT_DETECTED=1
+        INSTALL_VENDORED_GIT_PATH="$vendored_git"
         summary::add "warned" \
             "vendored .git/ detected at ${vendored_git}; remove with: rm -rf ${vendored_git} (FR-049)"
         install::_log_warn \
@@ -3273,6 +3306,15 @@ install::main() {
         summary::add "warned" "running in --dev mode; EXTENSION_ROOT=${EXTENSION_ROOT}"
     fi
 
+    # ---- S0: FR-046 self-install guard (T258) ------------------------------
+    # Compare the bridge's SOURCE (EXTENSION_ROOT — the directory the
+    # caller is running install from) against the TARGET (the
+    # consumer-repo cwd). When the two canonical paths collide, halt
+    # exit 2 BEFORE any filesystem mutation or dependency-check work
+    # per install-flags.md §4 + FR-046. The helper itself emits the
+    # verbatim message and calls `exit 2`.
+    install::detect_self_install "$EXTENSION_ROOT" "$PWD"
+
     # ---- FR-033b: dogfood-safe acknowledgement (env var) -------------------
     install::detect_dogfood_safe_mode
     if (( INSTALL_DOGFOOD_SAFE_MODE == 1 )); then
@@ -3400,6 +3442,12 @@ install::main() {
                 printf '  3. Verify by running /spec-kit-linear-push --dry-run.\n'
                 ;;
         esac
+        # T259 / FR-049: mirror the vendored-`.git/` warning into the
+        # Next-steps block per install-prompts.md §7 so the operator
+        # sees the `rm -rf …` remediation at the bottom of the run too.
+        if (( INSTALL_VENDORED_GIT_DETECTED == 1 )); then
+            printf '  *. Remove vendored .git/: rm -rf %s (FR-049)\n' "$INSTALL_VENDORED_GIT_PATH"
+        fi
     } >&2
 
     summary::emit
