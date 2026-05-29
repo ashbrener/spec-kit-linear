@@ -191,18 +191,29 @@ declare -g ARG_SPEC=""          # NNN or empty
 declare -g ARG_ALL=0            # 0|1
 declare -g ARG_DRY_RUN=0        # 0|1
 declare -g ARG_QUIET=0          # 0|1
-declare -g ARG_RETROACTIVE=0    # 0|1 — first-time-adoption mode: bypasses the
-                                #       FR-025 write-authority gate so writes
-                                #       proceed for every enumerated spec
-                                #       regardless of the worktree's current
-                                #       branch. Also suppresses the per-spec
-                                #       "non-authoritative" skip warning.
+declare -g ARG_RETROACTIVE=0    # 0|1 — DEPRECATED no-op alias (spec 003 /
+                                #       FR-061). Writing from any branch is the
+                                #       default after the FR-025 gate removal, so
+                                #       this flag now sets NO behavioral global;
+                                #       it only triggers a single deprecation
+                                #       INFO row at parse time. Retained solely
+                                #       so pasted v0.1.x commands still run.
 
-# FR-014 retroactive bypass accumulator. Incremented once per spec whose
-# FR-025 authority gate was bypassed because --retroactive was set;
-# surfaced as a single aggregate INFO row in summary::emit so the
-# operator sees, after the fact, that the write path fired for specs
-# that wouldn't normally be writable from this worktree. Zero ⇒ no row.
+# Drift disposition override (spec 003 / FR-056, plan A11). Empty = unset =
+# the proceed-and-warn default. Set to `abort` or `proceed` via
+# --on-drift=<value>; any other value is a usage error at parse time. Has no
+# observable effect when no backward-drift fires (data-model §3.5). Wired
+# into the disposition fork by US2 (T334) / US3 (T343) — Phase 2 only parses
+# it.
+declare -g ARG_ON_DRIFT=""      # "" | abort | proceed
+
+# DEPRECATED (spec 003 / FR-061, plan A12): the v0.1.x retroactive-bypass
+# accumulator. Its end-of-run `summary::add warned` aggregate row is RETIRED
+# — writing from any branch is now the default, so there is no bypass to
+# surface. The declaration is retained ONLY so the still-present FR-025 gate
+# in reconcile::process_spec (which US1/T324 removes wholesale) can keep
+# incrementing it safely under `set -u`; nothing reads it any more. When
+# T324 deletes the gate, this declaration and its lone increment go with it.
 declare -g _RECONCILE_RETROACTIVE_BYPASS_COUNT=0
 
 # Aggregate exit-code tracker. We start at 0 and monotonically promote
@@ -215,8 +226,8 @@ declare -g RECONCILE_EXIT_CODE=0
 # -----------------------------------------------------------------------------
 reconcile::usage() {
     cat >&2 <<'EOF'
-Usage: reconcile.sh [--spec NNN | --all] [--dry-run] [--retroactive] [--quiet]
-                    [--config PATH] [--help]
+Usage: reconcile.sh [--spec NNN | --all] [--dry-run] [--on-drift=abort|proceed]
+                    [--quiet] [--config PATH] [--help]
 
 Reconcile filesystem spec state into Linear (Layer D). Idempotent.
 
@@ -225,14 +236,18 @@ Options:
   --all            Reconcile every specs/NNN-feature/ in the repo.
                    (Exactly one of --spec or --all is required.)
   --dry-run        Log every mutation that WOULD fire; issue none.
-  --retroactive    First-time-adoption mode (FR-014). BYPASSES the FR-025
-                   write-authority gate so every enumerated spec is
-                   reconciled regardless of the worktree's current branch.
-                   Intended for the first reconcile after installing the
-                   bridge into a repo with existing specs — drop the flag
-                   for subsequent runs and rely on per-branch reconciles.
-                   Also suppresses the per-spec "non-authoritative" skip
-                   warning. Implies --all if --spec is not given.
+  --on-drift=V     Disposition for backward-drift (Linear ahead of disk) on a
+                   non-interactive run. V is one of:
+                     proceed  Overwrite Linear from disk and record a WARNING
+                              (the default when --on-drift is omitted).
+                     abort    Skip the drifted spec, leave Linear unchanged,
+                              and record a WARNING + skip note.
+                   Has no effect when no drift fires. An interactive (TTY) run
+                   prompts proceed/abort instead. Any other value is an error.
+  --retroactive    DEPRECATED no-op (FR-061). Writing from any branch is now
+                   the default — this flag is no longer needed. Passing it
+                   prints one deprecation INFO row and otherwise changes
+                   nothing. Use --all to enumerate every spec.
   --quiet          Suppress per-mutation log lines. Summary still emits.
   --config PATH    Override the path to linear-config.yml
                    (default: .specify/extensions/linear/linear-config.yml).
@@ -315,7 +330,27 @@ reconcile::parse_args() {
                 ARG_QUIET=1
                 shift
                 ;;
+            --on-drift)
+                if (( $# < 2 )); then
+                    printf 'spec-kit-linear: --on-drift requires a value (abort|proceed)\n' >&2
+                    reconcile::usage
+                    exit 2
+                fi
+                ARG_ON_DRIFT="$2"
+                shift 2
+                ;;
+            --on-drift=*)
+                ARG_ON_DRIFT="${1#--on-drift=}"
+                shift
+                ;;
             --retroactive)
+                # DEPRECATED no-op alias (FR-061 / spec 003). Writing from
+                # any branch is the default after the FR-025 gate removal, so
+                # this flag sets NO behavioral global. We mark it seen here so
+                # main() can emit EXACTLY ONE deprecation INFO row after
+                # summary::start (the row would otherwise be wiped by the
+                # summary reset that follows arg-parse). The per-spec
+                # _RECONCILE_RETROACTIVE_BYPASS_COUNT accumulator is retired.
                 ARG_RETROACTIVE=1
                 shift
                 ;;
@@ -344,7 +379,22 @@ reconcile::parse_args() {
         esac
     done
 
-    # --retroactive without an explicit --spec implies --all.
+    # Validate --on-drift early: an unrecognised value is a usage error at
+    # parse time (FR-056 / plan A6/A11). Empty = unset = proceed-and-warn
+    # default; only `abort`/`proceed` are otherwise accepted.
+    case "$ARG_ON_DRIFT" in
+        ''|abort|proceed) : ;;
+        *)
+            printf 'spec-kit-linear: --on-drift value must be abort or proceed (got %q)\n' "$ARG_ON_DRIFT" >&2
+            reconcile::usage
+            exit 2
+            ;;
+    esac
+
+    # Legacy --retroactive (deprecated no-op) with no explicit --spec still
+    # implies --all, so a pasted v0.1.x command keeps its byte-identical
+    # enumeration behaviour (SC-021). The flag itself changes nothing else;
+    # the one deprecation INFO row is emitted by main() after summary::start.
     if (( ARG_RETROACTIVE == 1 )) && [[ -z "$ARG_SPEC" ]] && (( ARG_ALL == 0 )); then
         ARG_ALL=1
     fi
@@ -2451,6 +2501,208 @@ reconcile::sync_clarify_comments() {
     done < <(parser::clarify_sessions "$spec_md")
 }
 
+# =============================================================================
+# Spec 003 — drift machinery (PURE comparator + ladder).
+#
+# These functions are FOUNDATIONAL and side-effect-free: they read git +
+# the already-fetched Linear issue JSON and emit a verdict, but they DO NOT
+# touch the reconcile::sync_spec_issue write path. The gate removal and the
+# threading of compute_drift into the write flow are US1's job (T323/T324) —
+# Phase 2 keeps this layer pure so Phase 3 can wire it in cleanly.
+# =============================================================================
+
+# Drift recency clock-skew tolerance, in seconds (recency-comparison §3,
+# plan A1). Overridable via the environment for testing / tuning; a few
+# minutes absorbs laptop↔Linear clock skew without masking real edits.
+declare -g RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS="${RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS:-120}"
+
+# Sentinel ordinal returned for an unknown / uninferrable phase token. Any
+# value strictly greater than the top real ordinal (merged=6) would falsely
+# read as "ahead"; we instead use a distinct negative sentinel that the
+# comparator special-cases to DISABLE the phase signal entirely (falling
+# back to recency alone), matching the malformed-artifacts edge case
+# (data-model §3.3, plan A8).
+declare -gri RECONCILE_PHASE_ORDINAL_UNKNOWN=-1
+
+# reconcile::_phase_ordinal <phase_token>      (data-model §2 ladder, A8)
+#   Map a lifecycle phase token to its strictly-ordered ordinal int on
+#   stdout. The ladder is total over every token parser::lifecycle_phase can
+#   emit:
+#       clarifying=0 specifying=1 planning=2 tasking=3
+#       implementing=4 ready_to_merge=5 merged=6
+#   An unknown / empty token echoes the UNKNOWN sentinel (-1), which the
+#   comparator reads as "phase signal unavailable — use recency alone". This
+#   is a pure lookup: no git, no network, no global mutation.
+reconcile::_phase_ordinal() {
+    local token="${1:-}"
+    case "$token" in
+        clarifying)     printf '0\n' ;;
+        specifying)     printf '1\n' ;;
+        planning)       printf '2\n' ;;
+        tasking)        printf '3\n' ;;
+        implementing)   printf '4\n' ;;
+        ready_to_merge) printf '5\n' ;;
+        merged)         printf '6\n' ;;
+        *)              printf '%s\n' "$RECONCILE_PHASE_ORDINAL_UNKNOWN" ;;
+    esac
+}
+
+# reconcile::_linear_phase_token <issue_json>  (drift-detection-graphql §3)
+#   Derive the Linear-recorded lifecycle phase token from an already-fetched
+#   spec-Issue JSON object. Precedence:
+#     1. A `phase:<token>` label present → that token (the primary source).
+#     2. No phase label AND workflow state in a completed/merged category
+#        (state.type == "completed") → `merged` (FR-013; merged carries no
+#        phase label).
+#     3. Otherwise → empty (phase signal unavailable for this issue).
+#   Reads ONLY fields already selected by the v0.1.0 reconcile fetch
+#   (labels.nodes[].name, state.type) — no new GraphQL surface.
+reconcile::_linear_phase_token() {
+    local issue_json="${1:-}"
+    [[ -n "$issue_json" ]] || return 0
+
+    # Guard against a non-object / empty-lookup response (absent Issue, US2).
+    if ! printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local label_token
+    label_token="$(printf '%s' "$issue_json" \
+        | jq -r '
+            (.labels.nodes // [])
+            | map(.name | select(startswith("phase:")))
+            | (.[0] // "")
+            | ltrimstr("phase:")
+          ' 2>/dev/null || printf '')"
+    if [[ -n "$label_token" ]]; then
+        printf '%s\n' "$label_token"
+        return 0
+    fi
+
+    # No phase label — a completed workflow state means merged (FR-013).
+    local state_type
+    state_type="$(printf '%s' "$issue_json" \
+        | jq -r '.state.type // "" | ascii_downcase' 2>/dev/null || printf '')"
+    if [[ "$state_type" == "completed" ]]; then
+        printf 'merged\n'
+    fi
+}
+
+# reconcile::compute_drift <feature_number> <spec_dir> <linear_issue_json> <disk_phase_token>
+#                                       (FR-052, data-model §3.3, A9, A8)
+#
+#   THE PURE BACKWARD-DRIFT COMPARATOR. Takes the disk-inferred phase token
+#   (already computed by the caller via parser::lifecycle_phase — passed IN,
+#   not recomputed, per A9), the spec dir (for the recency disk key), and the
+#   already-fetched Linear spec-Issue JSON, and emits a single-line verdict
+#   on stdout that the disposition flow and the WARNING emitter both consume:
+#
+#       fired=<0|1> phase_drift=<0|1> recency_drift=<0|1> signals=<csv> \
+#           disk=<tok> linear=<tok> [disk_iso=<iso> linear_iso=<iso> skew=<n>]
+#
+#   Rules (recency-comparison §3, data-model §3.3):
+#     * phase_drift = ordinal(linear) > ordinal(disk), STRICTLY. Skipped
+#       (treated false) when either ordinal is the UNKNOWN sentinel
+#       (uninferrable disk phase, or Linear issue with no derivable phase).
+#     * recency_drift = (linear_epoch - disk_epoch) > SKEW. false when the
+#       disk recency is `unavailable` (Edge Case 1) or the Linear updatedAt
+#       is missing/unparseable (degrade to phase alone, never fabricate).
+#     * fired = phase_drift OR recency_drift.
+#     * signals = csv of {phase_ordering, recency} that fired ("" when none).
+#     * Absent Linear Issue (empty/`{}`/non-object JSON, US2 first reconcile)
+#       → nothing to be ahead of → fired=0 (drift-detection-graphql §5 row 3).
+#
+#   PURE: reads git (spec_dir_last_commit) + the issue JSON; performs NO
+#   write, NO summary::add, NO global mutation. feature_number is accepted
+#   for per-Project scoping symmetry with the caller (Edge Case 5) but the
+#   comparison is entirely local to the inputs.
+reconcile::compute_drift() {
+    local feature_number="${1:-}"
+    local spec_dir="${2:-}"
+    local issue_json="${3:-}"
+    local disk_phase_token="${4:-}"
+
+    : "${feature_number:-}"  # accepted for scoping symmetry; unused locally
+
+    # --- Linear-side phase + recency, derived from the already-fetched JSON.
+    local linear_phase_token='' linear_updated_iso='' linear_epoch=''
+    local issue_is_object=0
+    if [[ -n "$issue_json" ]] \
+        && printf '%s' "$issue_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        issue_is_object=1
+        linear_phase_token="$(reconcile::_linear_phase_token "$issue_json")"
+        linear_updated_iso="$(printf '%s' "$issue_json" \
+            | jq -r '.updatedAt // ""' 2>/dev/null || printf '')"
+        if [[ -n "$linear_updated_iso" && "$linear_updated_iso" != "null" ]]; then
+            linear_epoch="$(git_helpers::iso_to_epoch "$linear_updated_iso")"
+        fi
+    fi
+
+    # Absent Linear Issue (first reconcile, US2): nothing to be ahead of.
+    if (( issue_is_object == 0 )); then
+        printf 'fired=0 phase_drift=0 recency_drift=0 signals= disk=%s linear=\n' \
+            "${disk_phase_token:-}"
+        return 0
+    fi
+
+    # --- Disk-side recency key (FR-053; git committer date, never mtime).
+    local disk_iso='' disk_epoch=''
+    disk_iso="$(git_helpers::spec_dir_last_commit "$spec_dir")"
+    if [[ -n "$disk_iso" ]]; then
+        disk_epoch="$(git_helpers::iso_to_epoch "$disk_iso")"
+    fi
+
+    # --- Phase-ordering signal -------------------------------------------
+    local disk_ord linear_ord phase_drift=0
+    disk_ord="$(reconcile::_phase_ordinal "$disk_phase_token")"
+    linear_ord="$(reconcile::_phase_ordinal "$linear_phase_token")"
+    # Skip the phase signal when EITHER ordinal is unknown (uninferrable disk
+    # phase, or a Linear issue with no derivable phase) — recency alone then.
+    if (( disk_ord != RECONCILE_PHASE_ORDINAL_UNKNOWN )) \
+        && (( linear_ord != RECONCILE_PHASE_ORDINAL_UNKNOWN )) \
+        && (( linear_ord > disk_ord )); then
+        phase_drift=1
+    fi
+
+    # --- Recency signal ---------------------------------------------------
+    local recency_drift=0
+    local skew="${RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS:-120}"
+    if [[ -n "$disk_epoch" && -n "$linear_epoch" ]]; then
+        if (( linear_epoch - disk_epoch > skew )); then
+            recency_drift=1
+        fi
+    fi
+
+    # --- Combine ----------------------------------------------------------
+    local fired=0 signals=''
+    if (( phase_drift == 1 )); then
+        signals="phase_ordering"
+    fi
+    if (( recency_drift == 1 )); then
+        if [[ -n "$signals" ]]; then
+            signals="${signals},recency"
+        else
+            signals="recency"
+        fi
+    fi
+    if (( phase_drift == 1 || recency_drift == 1 )); then
+        fired=1
+    fi
+
+    # --- Single-line verdict (A9). Recency detail fields only when recency
+    #     fired, so the WARNING emitter can append the detail line verbatim.
+    if (( recency_drift == 1 )); then
+        printf 'fired=%s phase_drift=%s recency_drift=%s signals=%s disk=%s linear=%s disk_iso=%s linear_iso=%s skew=%s\n' \
+            "$fired" "$phase_drift" "$recency_drift" "$signals" \
+            "${disk_phase_token:-}" "${linear_phase_token:-}" \
+            "${disk_iso:-}" "${linear_updated_iso:-}" "$skew"
+    else
+        printf 'fired=%s phase_drift=%s recency_drift=%s signals=%s disk=%s linear=%s\n' \
+            "$fired" "$phase_drift" "$recency_drift" "$signals" \
+            "${disk_phase_token:-}" "${linear_phase_token:-}"
+    fi
+}
+
 # reconcile::pr_state_hint <pr_state_raw>
 #   Normalise the raw output of git_helpers::pr_state into the lifecycle
 #   hint token parser::lifecycle_phase expects: `merged`, `ready`, or the
@@ -2866,10 +3118,16 @@ reconcile::main() {
     if (( ARG_DRY_RUN == 1 )); then
         title="${title} (dry-run)"
     fi
-    if (( ARG_RETROACTIVE == 1 )); then
-        title="${title} (retroactive)"
-    fi
     summary::start "$title"
+
+    # FR-061: --retroactive is a deprecated no-op alias. Emit EXACTLY ONE
+    # INFO row per invocation (drift-warning-surface §6 verbatim text). It
+    # lands here, just after summary::start, so it survives the buffer reset
+    # that summary::start performs and renders as the top-of-summary INFO
+    # line (drift-warning-surface §7 / plan A12).
+    if (( ARG_RETROACTIVE == 1 )); then
+        summary::add info "--retroactive is deprecated and now the default — writing from any branch needs no flag (use --all to enumerate)"
+    fi
 
     # Step 2 — config load. Exits 2 via config::*'s own halt on failure.
     reconcile::load_config
@@ -2901,19 +3159,10 @@ reconcile::main() {
     # than blocking the per-spec writes.
     reconcile::sync_project_status || true
 
-    # FR-014 retroactive-bypass aggregate INFO row. When --retroactive
-    # caused one or more specs to be reconciled despite a non-
-    # authoritative worktree, surface a single summary entry naming
-    # the count and the current branch so the operator has a clear
-    # audit breadcrumb that the FR-025 gate was deliberately bypassed
-    # (and how often). Recorded via summary::add warned so it appears
-    # in the warnings block — the bypass is a notable, operator-facing
-    # event, not an error.
-    if (( _RECONCILE_RETROACTIVE_BYPASS_COUNT > 0 )); then
-        local _retro_branch
-        _retro_branch="$(git_helpers::current_branch 2>/dev/null || true)"
-        summary::add warned "retroactive: ${_RECONCILE_RETROACTIVE_BYPASS_COUNT} spec(s) reconciled despite non-authoritative worktree (current branch '${_retro_branch:-detached}'); FR-025 gate bypassed per FR-014 first-time-adoption contract"
-    fi
+    # (FR-061 / spec 003) The v0.1.x retroactive-bypass aggregate warned row
+    # is RETIRED: writing from any branch is now the default, so there is no
+    # "bypass" to count. The one-time deprecation INFO row is emitted up-front
+    # in main() right after summary::start instead.
 
     # Step 5 — summary emission (Principle VIII).
     summary::emit
