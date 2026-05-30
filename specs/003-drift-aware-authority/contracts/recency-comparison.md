@@ -38,22 +38,26 @@ Both paths MUST be attempted (GNU first, BSD fallback), matching the repo's exis
 
 ## 3. The comparison
 
-Given `disk_epoch` (spec-dir last commit) and `linear_epoch` (Linear `updatedAt`):
+Recency is a CORROBORATING signal: it may fire ONLY when a phase-ordinal
+drift has already fired (`phase_drift == 1`). Given `disk_epoch` (spec-dir
+last commit) and `linear_epoch` (Linear `updatedAt`):
 
 ```text
-recency_drift = (linear_epoch - disk_epoch) > SKEW_TOLERANCE_SECONDS
+recency_drift = phase_drift == 1
+                && (linear_epoch - disk_epoch) > SKEW_TOLERANCE_SECONDS
 ```
 
 | Constant | Value | Source |
 |---|---|---|
-| `SKEW_TOLERANCE_SECONDS` | `120` | plan A1 ("a few minutes"; absorbs laptop↔Linear clock skew without masking real edits) |
+| `SKEW_TOLERANCE_SECONDS` | `120` | plan A1 ("a few minutes"; absorbs laptop↔Linear clock skew without masking real edits). Overridable via `RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS`; a malformed (non-integer) value falls back to 120 rather than aborting the reconcile. |
 
 **Rules**:
 
+- `recency_drift = false` whenever there is no phase drift to corroborate (#01). The bridge owns the Issue body, so its own writes bump `updatedAt` past the spec-dir commit; were recency a standalone trigger, every no-op re-run would exceed the window and report spurious drift, violating idempotency (SC-017). Gating recency behind a phase drift keeps an unchanged-spec re-run silent.
 - `recency_drift = false` when `disk_epoch` is `unavailable` (Edge Case 1) — fall back to phase-ordering alone.
 - Forward case: `disk_epoch >= linear_epoch` (or within tolerance) → `recency_drift = false` (SC-017 — no false positive on the normal write path).
 - The comparison uses the **Issue-level** `updatedAt`, not per-field timestamps (research §1 alternatives).
-- A prior reconcile's own write does not re-fire recency on the next no-op run because idempotency means `updatedAt` does not advance (Edge Case 3 / FR-063).
+- A prior reconcile's own write does not re-fire recency on the next no-op run: idempotency means the phase does not advance, so the recency gate (`phase_drift == 1`) is not met regardless of `updatedAt` (Edge Case 3 / FR-063).
 
 ## 4. Multi-worktree ranking — `git_helpers::worktrees_touching_spec`
 

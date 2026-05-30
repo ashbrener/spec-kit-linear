@@ -199,20 +199,21 @@ _commit_spec_at() {
   [[ "$output" != *"signals=phase_ordering,recency"* ]]
 }
 
-@test "compute_drift: recency-only fire (>120s, equal phase) names recency" {
-  # disk commit 09:31:00, Linear updatedAt 09:35:00 (+240s), both planning.
+@test "compute_drift: equal phase + Linear updatedAt far ahead fires NOTHING (#01 idempotency / SC-017)" {
+  # Recency is a CORROBORATING signal only — it never fires on its own (#01).
+  # disk commit 09:31:00, Linear updatedAt 09:35:00 (+240s) but BOTH planning
+  # (equal phase). This is the shape of a no-op re-run after the bridge's own
+  # write bumped updatedAt; the old behaviour fired recency alone here and
+  # broke idempotency. The new contract suppresses it: no phase drift to
+  # corroborate ⇒ nothing fires.
   _commit_spec_at "specs/311-recency" "2026-05-26T09:31:00+00:00"
   local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_recency.json")"
   run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && reconcile::compute_drift 311 'specs/311-recency' '$json' planning"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"fired=1"* ]]
+  [[ "$output" == *"fired=0"* ]]
   [[ "$output" == *"phase_drift=0"* ]]
-  [[ "$output" == *"recency_drift=1"* ]]
-  [[ "$output" == *"signals=recency"* ]]
-  # Recency detail fields present only when recency fired.
-  [[ "$output" == *"disk_iso="* ]]
-  [[ "$output" == *"linear_iso=2026-05-26T09:35:00+00:00"* ]]
-  [[ "$output" == *"skew=120"* ]]
+  [[ "$output" == *"recency_drift=0"* ]]
+  [[ "$output" != *"signals=recency"* ]]
 }
 
 @test "compute_drift: both signals fire → signals=phase_ordering,recency" {
@@ -228,13 +229,33 @@ _commit_spec_at() {
 }
 
 @test "compute_drift: skew tolerance is overridable via the environment" {
-  # +30s with a 10s tolerance → recency fires; default 120s would not.
-  _commit_spec_at "specs/313-skew" "2026-05-26T09:31:00+00:00"
-  local json; json="$(cat "$FIXTURES/spec_issue_within_skew.json")"
-  run bash -c "cd '$REPO' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=10 source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=10 reconcile::compute_drift 313 'specs/313-skew' '$json' implementing"
+  # Recency only corroborates a phase drift (#01), so keep a phase drift live
+  # (disk planning < Linear implementing) and vary only whether recency
+  # piggybacks. disk commit 09:28:00, Linear updatedAt 09:31:00 (+180s). A
+  # huge override (9999s) puts the gap WITHIN tolerance → recency suppressed,
+  # phase drift still fires alone; proving the env value is honoured (default
+  # 120s would have let recency corroborate — see the next test).
+  _commit_spec_at "specs/310-skew" "2026-05-26T09:28:00+00:00"
+  local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_phase.json")"
+  run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=9999 reconcile::compute_drift 310 'specs/310-skew' '$json' planning"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"phase_drift=1"* ]]
+  [[ "$output" == *"recency_drift=0"* ]]
+  [[ "$output" == *"signals=phase_ordering"* ]]
+  [[ "$output" != *"signals=phase_ordering,recency"* ]]
+}
+
+@test "compute_drift: default skew lets recency corroborate a phase drift" {
+  # Same phase drift, default 120s tolerance: +180s gap > 120s → recency
+  # corroborates → both signals named.
+  _commit_spec_at "specs/310-skew2" "2026-05-26T09:28:00+00:00"
+  local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_phase.json")"
+  run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && reconcile::compute_drift 310 'specs/310-skew2' '$json' planning"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"phase_drift=1"* ]]
   [[ "$output" == *"recency_drift=1"* ]]
-  [[ "$output" == *"skew=10"* ]]
+  [[ "$output" == *"signals=phase_ordering,recency"* ]]
+  [[ "$output" == *"skew=120"* ]]
 }
 
 # -----------------------------------------------------------------------------
