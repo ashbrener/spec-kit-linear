@@ -91,7 +91,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0009-4ccc-cccc-cccccccccccc","name":"Done","type":"completed"},
         "labels":{"nodes":[{"name":"speckit-spec:001"},{"name":"phase:merged"}]},
         "project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"spec-kit-linear"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       },
       {
@@ -104,7 +104,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0004-4ccc-cccc-cccccccccccc","name":"Tasking","type":"started"},
         "labels":{"nodes":[{"name":"speckit-spec:002"},{"name":"phase:tasking"}]},
         "project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"spec-kit-linear"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       }
     ]'
@@ -150,7 +150,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0004-4ccc-cccc-cccccccccccc","name":"Tasking","type":"started"},
         "labels":{"nodes":[{"name":"speckit-spec:002"},{"name":"phase:tasking"}]},
         "project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"spec-kit-linear"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       },
       {
@@ -163,7 +163,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0003-4ccc-cccc-cccccccccccc","name":"Planning","type":"unstarted"},
         "labels":{"nodes":[{"name":"speckit-spec:003"},{"name":"phase:planning"}]},
         "project":{"id":"bbbbbbbb-2222-4bbb-bbbb-bbbbbbbbbbbb","name":"another-repo"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       }
     ]'
@@ -211,7 +211,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0006-4ccc-cccc-cccccccccccc","name":"Implementing","type":"started"},
         "labels":{"nodes":[{"name":"speckit-spec:005"},{"name":"phase:implementing"}]},
         "project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"spec-kit-linear"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       }
     ]'
@@ -257,7 +257,7 @@ SPEC_UUID_13="ee000000-0000-4000-0000-000000000013"
         "state":{"id":"cccccccc-0006-4ccc-cccc-cccccccccccc","name":"Implementing","type":"started"},
         "labels":{"nodes":[{"name":"speckit-spec:005"},{"name":"phase:implementing"}]},
         "project":{"id":"bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb","name":"spec-kit-linear"},
-        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"ash","displayName":"ash"},
+        "assignee":{"id":"33333333-3333-4333-8333-333333333333","name":"operator","displayName":"operator"},
         "team":{"id":"aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa","key":"ACM","organization":{"urlKey":"acme"}}
       }
     ]'
