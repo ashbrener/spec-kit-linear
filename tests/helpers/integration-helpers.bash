@@ -479,6 +479,36 @@ EOF
     chmod +x "${MOCK_BIN}/gh"
 }
 
+# integration::install_gh_shim_merged
+#   Install a `gh` shim that reports the feature branch's PR as MERGED. Mirrors
+#   install_gh_shim_no_pr's shape but answers `gh pr list ... --json ...` with a
+#   one-element array carrying the REAL gh fields git_helpers::pr_state reads
+#   (state/isDraft/mergedAt/url) so reconcile::pr_state_hint resolves `merged`
+#   (FR-013/SC-014). `gh auth status` succeeds so pr_state takes the gh path
+#   rather than the git-only reachability fallback.
+integration::install_gh_shim_merged() {
+    cat > "${MOCK_BIN}/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    auth)
+        # `gh auth status` → authenticated, so pr_state takes the gh path.
+        exit 0
+        ;;
+    pr)
+        # `gh pr list --head <branch> --state all --json state,isDraft,mergedAt,url`
+        # → a single MERGED PR. git_helpers::pr_state extracts .[0]; the rich
+        # object's state=MERGED makes reconcile::pr_state_hint emit `merged`.
+        printf '%s\n' '[{"state":"MERGED","isDraft":false,"mergedAt":"2026-05-20T00:00:00Z","url":"https://github.com/acme/repo/pull/4"}]'
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "${MOCK_BIN}/gh"
+}
+
 # -----------------------------------------------------------------------------
 # integration::find_install_sh
 # integration::find_seed_sh
