@@ -56,3 +56,38 @@ Not necessarily either/or — a per-repo config mode (`spec_granularity: issue |
 ### Recommendation (discussion, not a decision)
 
 Keep spec→Issue as the shipping default. The lifecycle-state-on-Issue advantage is concrete, and the founding use case is "many repos, many specs, one pane" — which spec→Issue serves directly. Re-evaluate spec→Project as a possible **spec 004** after spec 003 (drift-aware authority) ships and there is real dogfood evidence on how cramped large specs feel in practice.
+
+---
+
+## Q2 — `.linearrc` cascade for API-key resolution (replace per-repo `.env`)
+
+**Tracking issue**: [#20](https://github.com/ashbrener/spec-kit-linear/issues/20)
+**Status**: OPEN — discussion only. v0.2.x candidate; backward-compatible (per-repo `.env` stays as a low-precedence fallback).
+
+### Problem
+
+FR-037 resolves the Linear API key as: `LINEAR_API_KEY` env var → per-repo `.env` → interactive prompt. The per-repo `.env` is a **granularity mismatch** — the key is per-operator (a personal token) but `.env` stores it per-working-directory:
+
+- **Worktrees don't share `.env`** (gitignored files are not copied into linked worktrees), so every worktree needs its own copy. Observed live: a reconcile from a worktree failed until `.env` was hand-copied in.
+- Cross-spec / cross-repo propagation is brittle.
+
+### Proposed — `.linearrc` cascade (npm `.npmrc` model)
+
+Resolution order, highest → lowest precedence:
+
+| Tier | Source | Role |
+|---|---|---|
+| 1 | `LINEAR_API_KEY` env var | CI / ephemeral overrides (already supported) |
+| 2 | project `./.linearrc` (gitignored) | per-repo **non-secret** overrides (team/project hints, on-drift default). NOT the key — putting the secret here reproduces the `.env` worktree problem. |
+| 3 | user `~/.linearrc` or `$XDG_CONFIG_HOME/spec-kit-linear/linearrc` | **operator-global; recommended home for the API key.** Inherited by every repo/worktree/spec. |
+| 4 | keychain command (configurable `key_command`) | `security find-generic-password …` / `op read …`. Most secure; no plaintext at rest. |
+
+The secret lives at tier 3 or 4 (operator-global), which solves worktree + cross-spec propagation. Tier 2 mirrors how npm's project `.npmrc` overrides settings while the auth token lives in `~/.npmrc`.
+
+### Constitution fit
+
+Principle VI (OAuth-First, Keys-At-The-Edges): the key only ever lives at the edges (env / user-rc / keychain), never committed, resolved once per operator. The keychain tier is the strongest expression of "keys at the edges."
+
+### Immediate workaround (no code today)
+
+The env var is already tier 1, so operators can `export LINEAR_API_KEY` in their shell rc (keychain-backed if desired) right now — every repo/worktree/spec inherits it. The `.linearrc` cascade is the ergonomic upgrade that removes the shell-rc dependency.
