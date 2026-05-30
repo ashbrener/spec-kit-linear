@@ -513,6 +513,21 @@ git_helpers::worktrees_touching_spec() {
   local invoking_root=''
   invoking_root=$("$git_bin" rev-parse --show-toplevel 2>/dev/null || printf '')
 
+  # Tie-break ordering (FR-058 / FR-059): the caller ranks the emitted rows
+  # with a STABLE descending sort by epoch and takes the first row, so on an
+  # equal-epoch tie whichever row appears FIRST in this stream wins. The
+  # documented contract is that the invoking worktree wins such ties, but
+  # git_helpers::list_worktrees emits in `git worktree list` (porcelain)
+  # order — the MAIN worktree first, not necessarily the invoking one. We
+  # therefore buffer the invoking worktree's row and the rest separately,
+  # then print the invoking row AHEAD of the others. A strictly-greater
+  # epoch elsewhere still sorts above the invoking row in the caller's
+  # descending sort, so the non-tie path is unchanged; only exact ties are
+  # affected, and they now resolve to the invoking worktree as documented.
+  # When invoking_root is empty (rev-parse failed) nothing is held back and
+  # ordering falls through to porcelain order unchanged.
+  local invoking_line='' other_lines=''
+
   local path branch
   while IFS=$'\t' read -r path branch; do
     [[ -n "$path" ]] || continue
@@ -541,10 +556,26 @@ git_helpers::worktrees_touching_spec() {
     fi
     [[ -n "${epoch:-}" ]] || epoch=0
 
-    printf '%s\t%s\t%s\n' "$epoch" "$path" "$branch"
+    local row
+    row="$(printf '%s\t%s\t%s' "$epoch" "$path" "$branch")"
+
+    # Hold the invoking worktree's row back so it can be emitted FIRST (the
+    # equal-epoch tie-break, below); every other row keeps its porcelain
+    # order.
+    if [[ -n "$invoking_root" && "$path" == "$invoking_root" ]]; then
+      invoking_line="$row"
+    else
+      other_lines+="${row}"$'\n'
+    fi
   done < <(git_helpers::list_worktrees)
 
-  # Touch invoking_root so shellcheck does not flag it unused; it documents
-  # the tie-break rule (the caller resolves epoch ties to this path).
-  : "${invoking_root:-}"
+  # Invoking worktree first (tie-break winner), then the rest in porcelain
+  # order. printf '%s' on the (newline-terminated) accumulator avoids adding
+  # a spurious trailing blank line.
+  if [[ -n "$invoking_line" ]]; then
+    printf '%s\n' "$invoking_line"
+  fi
+  if [[ -n "$other_lines" ]]; then
+    printf '%s' "$other_lines"
+  fi
 }
