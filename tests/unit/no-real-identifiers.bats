@@ -37,8 +37,11 @@ _forbidden_patterns() {
   cd "$REPO_ROOT"
   local pattern hits all_hits=""
   while IFS= read -r pattern; do
-    # -I skips binaries; -E for the OSH-<N> char class. NUL-safe file list.
-    hits="$(git ls-files -z | xargs -0 grep -nIE "$pattern" 2>/dev/null || true)"
+    # -I skips binaries; -E for the issue-key char class; -i so workspace/key
+    # case variants (upper / lower / mixed) all collapse to one pattern.
+    # `--` terminates options before xargs appends filenames, so a tracked
+    # path beginning with `-` can never be misread as a grep flag.
+    hits="$(git ls-files -z | xargs -0 grep -nIiE -- "$pattern" 2>/dev/null || true)"
     if [ -n "$hits" ]; then
       all_hits+="--- pattern: ${pattern} ---"$'\n'"${hits}"$'\n'
     fi

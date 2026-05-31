@@ -2,7 +2,7 @@
   "data": {
     "viewer": {
       "id": "11111111-2222-3333-4444-555555555555",
-      "name": "Ash Brener",
+      "name": "Example Operator",
       "email": "ash@example.com",
       "organization": {
         "name": "ACME Infra",

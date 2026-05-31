@@ -199,20 +199,21 @@ _commit_spec_at() {
   [[ "$output" != *"signals=phase_ordering,recency"* ]]
 }
 
-@test "compute_drift: recency-only fire (>120s, equal phase) names recency" {
-  # disk commit 09:31:00, Linear updatedAt 09:35:00 (+240s), both planning.
+@test "compute_drift: equal phase + Linear updatedAt far ahead fires NOTHING (#01 idempotency / SC-017)" {
+  # Recency is a CORROBORATING signal only — it never fires on its own (#01).
+  # disk commit 09:31:00, Linear updatedAt 09:35:00 (+240s) but BOTH planning
+  # (equal phase). This is the shape of a no-op re-run after the bridge's own
+  # write bumped updatedAt; the old behaviour fired recency alone here and
+  # broke idempotency. The new contract suppresses it: no phase drift to
+  # corroborate ⇒ nothing fires.
   _commit_spec_at "specs/311-recency" "2026-05-26T09:31:00+00:00"
   local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_recency.json")"
   run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && reconcile::compute_drift 311 'specs/311-recency' '$json' planning"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"fired=1"* ]]
+  [[ "$output" == *"fired=0"* ]]
   [[ "$output" == *"phase_drift=0"* ]]
-  [[ "$output" == *"recency_drift=1"* ]]
-  [[ "$output" == *"signals=recency"* ]]
-  # Recency detail fields present only when recency fired.
-  [[ "$output" == *"disk_iso="* ]]
-  [[ "$output" == *"linear_iso=2026-05-26T09:35:00+00:00"* ]]
-  [[ "$output" == *"skew=120"* ]]
+  [[ "$output" == *"recency_drift=0"* ]]
+  [[ "$output" != *"signals=recency"* ]]
 }
 
 @test "compute_drift: both signals fire → signals=phase_ordering,recency" {
@@ -228,13 +229,33 @@ _commit_spec_at() {
 }
 
 @test "compute_drift: skew tolerance is overridable via the environment" {
-  # +30s with a 10s tolerance → recency fires; default 120s would not.
-  _commit_spec_at "specs/313-skew" "2026-05-26T09:31:00+00:00"
-  local json; json="$(cat "$FIXTURES/spec_issue_within_skew.json")"
-  run bash -c "cd '$REPO' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=10 source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=10 reconcile::compute_drift 313 'specs/313-skew' '$json' implementing"
+  # Recency only corroborates a phase drift (#01), so keep a phase drift live
+  # (disk planning < Linear implementing) and vary only whether recency
+  # piggybacks. disk commit 09:28:00, Linear updatedAt 09:31:00 (+180s). A
+  # huge override (9999s) puts the gap WITHIN tolerance → recency suppressed,
+  # phase drift still fires alone; proving the env value is honoured (default
+  # 120s would have let recency corroborate — see the next test).
+  _commit_spec_at "specs/310-skew" "2026-05-26T09:28:00+00:00"
+  local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_phase.json")"
+  run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS=9999 reconcile::compute_drift 310 'specs/310-skew' '$json' planning"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"phase_drift=1"* ]]
+  [[ "$output" == *"recency_drift=0"* ]]
+  [[ "$output" == *"signals=phase_ordering"* ]]
+  [[ "$output" != *"signals=phase_ordering,recency"* ]]
+}
+
+@test "compute_drift: default skew lets recency corroborate a phase drift" {
+  # Same phase drift, default 120s tolerance: +180s gap > 120s → recency
+  # corroborates → both signals named.
+  _commit_spec_at "specs/310-skew2" "2026-05-26T09:28:00+00:00"
+  local json; json="$(cat "$FIXTURES/spec_issue_linear_ahead_phase.json")"
+  run bash -c "cd '$REPO' && source '$GIT_HELPERS_SH' && source '$RECONCILE_SH' && reconcile::compute_drift 310 'specs/310-skew2' '$json' planning"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"phase_drift=1"* ]]
   [[ "$output" == *"recency_drift=1"* ]]
-  [[ "$output" == *"skew=10"* ]]
+  [[ "$output" == *"signals=phase_ordering,recency"* ]]
+  [[ "$output" == *"skew=120"* ]]
 }
 
 # -----------------------------------------------------------------------------
@@ -298,4 +319,64 @@ _commit_spec_at() {
   # the tie-break canonical; both paths are present in the touching set.
   [[ "$output" == *"/repo"$'\t'"main"* ]]
   [[ "$output" == *"repo-feature-007"*$'\t'"007-baz"* ]]
+}
+
+@test "worktrees_touching_spec: epoch tie → LINKED invoking worktree wins over porcelain-first main (T336c, finding #07)" {
+  # Finding #07: the test above invokes from the MAIN worktree, which `git
+  # worktree list --porcelain` already lists FIRST. So "emitted first" there is
+  # satisfied by porcelain order alone and cannot distinguish the documented
+  # invoking-worktree tie-break (git_helpers.sh §worktrees_touching_spec, which
+  # resolves invoking_root via `rev-parse --show-toplevel` from the CWD and
+  # buffers that row ahead of the porcelain order) from "main happens to be
+  # first". This test removes that confound: it invokes from the LINKED
+  # worktree, which is NOT porcelain-first, so the only way it can appear first
+  # is the reorder logic actually firing.
+  _commit_spec_at "specs/008-tie" "2026-05-22T12:00:00+00:00"
+  git -C "$REPO" worktree add --quiet -b 008-tie "$BATS_TEST_TMPDIR/repo-feature-008" main
+  # Linked worktree shares main's identical spec-dir commit (no new commit) →
+  # exact epoch tie. main is the spec's authoring worktree; the linked tree
+  # merely checks the same commit out, so neither has a strictly-greater epoch.
+
+  # Resolve BOTH worktree roots to the realpaths git itself reports in
+  # porcelain output. On macOS $BATS_TEST_TMPDIR lives under /var → /private/var,
+  # and `git worktree add` records the resolved /private/var form, so the literal
+  # "$BATS_TEST_TMPDIR/repo-feature-008" is not always cd-able. Reading the path
+  # back from `git worktree list --porcelain` gives a canonical, cd-able value.
+  local main_wt linked_wt
+  main_wt="$(git -C "$REPO" worktree list --porcelain \
+    | awk '/^worktree / && /repo$/{print $2; exit}')"
+  linked_wt="$(git -C "$REPO" worktree list --porcelain \
+    | awk '/^worktree / && /repo-feature-008$/{print $2; exit}')"
+  [ -n "$main_wt" ]
+  [ -n "$linked_wt" ]
+  [ -d "$linked_wt" ]
+
+  # Precondition: confirm porcelain order lists MAIN first, NOT the linked
+  # worktree — otherwise this test would prove nothing (same blind spot as the
+  # original). The linked worktree winning despite this is the real signal.
+  local porcelain_first
+  porcelain_first="$(git -C "$REPO" worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+  [ "$porcelain_first" = "$main_wt" ]
+  [ "$porcelain_first" != "$linked_wt" ]
+
+  # Invoke FROM the linked worktree: invoking_root resolves to the linked tree,
+  # so the tie-break must surface IT first despite porcelain order.
+  run bash -c "cd '$linked_wt' && source '$GIT_HELPERS_SH' && git_helpers::worktrees_touching_spec 008"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+
+  # Both lines carry the same epoch (the tie we constructed).
+  local e0 e1
+  e0="$(printf '%s' "${lines[0]}" | cut -f1)"
+  e1="$(printf '%s' "${lines[1]}" | cut -f1)"
+  [ "$e0" = "$e1" ]
+
+  # THE load-bearing assertion: the invoking (LINKED) worktree is emitted
+  # FIRST — line 0 is the 008-tie feature path, NOT main. Under porcelain
+  # order main would be first; only the invoking-root reorder puts the linked
+  # tree ahead. This is what the original main-invoked test could not prove.
+  [[ "${lines[0]}" == *"repo-feature-008"*$'\t'"008-tie" ]]
+  [[ "${lines[0]}" != *$'\t'"main" ]]
+  # ...and main still appears in the touching set (both worktrees present).
+  [[ "$output" == *"/repo"$'\t'"main"* ]]
 }

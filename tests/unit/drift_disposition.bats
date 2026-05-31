@@ -41,16 +41,43 @@ _timeout() {
     "$_TIMEOUT_BIN" "$secs" "$@"
     return $?
   fi
-  # Bash-native fallback: run the command, kill it if it outlives `secs`.
+  # Bash-native fallback when neither `timeout` nor `gtimeout` exists (stock
+  # macOS). Mirrors coreutils `timeout`'s observable contract so the SC-019 /
+  # A10 "never hangs" assertions are real, not theatre:
+  #   - NEVER blocks past `secs`, even if the child ignores SIGTERM — the
+  #     watcher escalates TERM -> KILL after a 1s grace, so a wedged `read`
+  #     cannot hang the suite forever (the old version only sent TERM and
+  #     then `wait`ed indefinitely);
+  #   - on timeout returns 124 (coreutils' sentinel), not the child's
+  #     143/signal status, so callers distinguish "timed out" from "exited
+  #     non-zero"; and
+  #   - both the child and the watcher are reaped (no zombie/leak).
+  # The commands under test are single `bash -c` processes blocking on a
+  # tty/file read; they spawn no grandchildren, so signalling the child pid
+  # is sufficient.
+  local marker
+  marker="$(mktemp)"
   "$@" &
   local pid=$!
-  ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) &
+  (
+    sleep "$secs"
+    printf 'timeout' > "$marker"     # record that the deadline fired
+    kill -TERM "$pid" 2>/dev/null
+    sleep 1                          # grace period for a clean exit
+    kill -KILL "$pid" 2>/dev/null    # escalate if the child ignored TERM
+  ) &
   local watcher=$!
   wait "$pid" 2>/dev/null
   local rc=$?
-  # Stop the watcher (it has either already fired or is still sleeping).
+  # Command finished (or was killed) — cancel + reap the watcher.
   kill "$watcher" 2>/dev/null
   wait "$watcher" 2>/dev/null
+  local timed_out=''
+  [ -s "$marker" ] && timed_out=1
+  rm -f "$marker"
+  if [ -n "$timed_out" ]; then
+    return 124
+  fi
   return "$rc"
 }
 

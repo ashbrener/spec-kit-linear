@@ -2637,10 +2637,13 @@ reconcile::_linear_phase_token() {
 #     * phase_drift = ordinal(linear) > ordinal(disk), STRICTLY. Skipped
 #       (treated false) when either ordinal is the UNKNOWN sentinel
 #       (uninferrable disk phase, or Linear issue with no derivable phase).
-#     * recency_drift = (linear_epoch - disk_epoch) > SKEW. false when the
-#       disk recency is `unavailable` (Edge Case 1) or the Linear updatedAt
-#       is missing/unparseable (degrade to phase alone, never fabricate).
-#     * fired = phase_drift OR recency_drift.
+#     * recency_drift = phase_drift AND (linear_epoch - disk_epoch) > SKEW.
+#       Recency CORROBORATES a phase drift, never fires alone (#01): it is
+#       false whenever phase_drift is false, when the disk recency is
+#       `unavailable` (Edge Case 1), or when the Linear updatedAt is
+#       missing/unparseable (degrade to phase alone, never fabricate).
+#     * fired = phase_drift (recency only sharpens it; with phase_drift=0,
+#       recency is forced false, so fired == phase_drift).
 #     * signals = csv of {phase_ordering, recency} that fired ("" when none).
 #     * Absent Linear Issue (empty/`{}`/non-object JSON, US2 first reconcile)
 #       → nothing to be ahead of → fired=0 (drift-detection-graphql §5 row 3).
@@ -2690,7 +2693,8 @@ reconcile::compute_drift() {
     disk_ord="$(reconcile::_phase_ordinal "$disk_phase_token")"
     linear_ord="$(reconcile::_phase_ordinal "$linear_phase_token")"
     # Skip the phase signal when EITHER ordinal is unknown (uninferrable disk
-    # phase, or a Linear issue with no derivable phase) — recency alone then.
+    # phase, or a Linear issue with no derivable phase). With no phase drift,
+    # nothing fires — recency only corroborates a phase drift, never alone (#01).
     if (( disk_ord != RECONCILE_PHASE_ORDINAL_UNKNOWN )) \
         && (( linear_ord != RECONCILE_PHASE_ORDINAL_UNKNOWN )) \
         && (( linear_ord > disk_ord )); then
@@ -2698,9 +2702,34 @@ reconcile::compute_drift() {
     fi
 
     # --- Recency signal ---------------------------------------------------
+    # Recency is a CORROBORATING signal, never a standalone trigger (#01).
+    #
+    # The disk key is the spec dir's last GIT COMMIT time; the Linear key is
+    # the Issue's `updatedAt`. The bridge's OWN write bumps `updatedAt` to
+    # "now", which is later than the last commit — so on every unchanged
+    # re-run `linear_epoch - disk_epoch` exceeds the skew and a naive recency
+    # check would fire spuriously, ratcheting `updatedAt` forward and firing
+    # forever. That breaks idempotency (SC-017): a no-op reconcile MUST
+    # surface no drift.
+    #
+    # The fix: recency may only fire ALONGSIDE a phase-ordering drift. If the
+    # disk and Linear phases agree (the unchanged-spec case), nothing fires.
+    # This also matches the unidirectional contract — the bridge owns the
+    # Issue body, so a third-party text edit (which moves `updatedAt` but not
+    # the phase) SHOULD be silently overwritten; only workflow-STATE
+    # advancement, which the phase signal already catches, is worth warning
+    # about. Recency then adds confidence/detail to a phase drift, it does
+    # not manufacture one.
+    #
+    # `skew` (seconds) is operator-tunable but must be a non-negative integer;
+    # a malformed value (#08) would crash the `(( ))` under `set -e`, so fall
+    # back to the 120s default rather than abort the reconcile.
     local recency_drift=0
     local skew="${RECONCILE_DRIFT_SKEW_TOLERANCE_SECONDS:-120}"
-    if [[ -n "$disk_epoch" && -n "$linear_epoch" ]]; then
+    if [[ ! "$skew" =~ ^[0-9]+$ ]]; then
+        skew=120
+    fi
+    if (( phase_drift == 1 )) && [[ -n "$disk_epoch" && -n "$linear_epoch" ]]; then
         if (( linear_epoch - disk_epoch > skew )); then
             recency_drift=1
         fi
@@ -2789,15 +2818,45 @@ reconcile::_fetch_drift_issue_json() {
         --arg project "$project_uuid" \
         '{label: $label, project: $project}')"
 
-    # Best-effort: a bounced read degrades to "absent" (fired=0), never
-    # fails the reconcile — drift is a courtesy surface, not a gate.
+    # Distinguish "Linear says the Issue is absent" (rc 0, empty stdout —
+    # a real first-reconcile state) from "we could not read Linear at all"
+    # (rc 3 — transport failure, a GraphQL errors[] payload, or an
+    # unparseable body). The caller keeps the historical best-effort default
+    # (advisory → proceed) BUT fails closed under `--on-drift=abort`: when
+    # the operator has explicitly asked us to abort on drift, an unreadable
+    # Linear must NOT be silently treated as "no drift" and overwritten
+    # (#02 — fail closed when we cannot prove Linear isn't ahead).
     if ! response="$(graphql::query "$query" "$vars" 2>/dev/null)"; then
-        return 0
+        return 3
     fi
-    # Freshest match wins (matches query_spec_issue's FR-004b ordering).
-    printf '%s' "$response" \
+    if [[ -z "$response" ]] || ! printf '%s' "$response" | jq -e . >/dev/null 2>&1; then
+        return 3
+    fi
+    if printf '%s' "$response" | jq -e '.errors | type == "array" and length > 0' \
+        >/dev/null 2>&1; then
+        return 3
+    fi
+    # `.data.issues.nodes` must be absent (→ treat as empty, genuinely absent)
+    # or an array. A structurally-malformed-but-parseable body (e.g. nodes is a
+    # number) is "unavailable", NOT "absent" — without this guard sort_by would
+    # error, get swallowed, and an --on-drift=abort run would overwrite a
+    # state we never actually read (#02 follow-up).
+    if ! printf '%s' "$response" \
+        | jq -e '(.data.issues.nodes == null) or (.data.issues.nodes | type == "array")' \
+            >/dev/null 2>&1; then
+        return 3
+    fi
+    # Freshest match wins (matches query_spec_issue's FR-004b ordering). A jq
+    # failure here is a real fault, not "absent" — surface it as unavailable
+    # (no `|| true` mask). Empty nodes → no output, rc 0 → genuinely absent
+    # (US2 first reconcile).
+    local node
+    if ! node="$(printf '%s' "$response" \
         | jq -c '(.data.issues.nodes // []) | sort_by(.updatedAt) | reverse | (.[0] // empty)' \
-            2>/dev/null || true
+            2>/dev/null)"; then
+        return 3
+    fi
+    printf '%s' "$node"
 }
 
 # reconcile::_emit_drift_warning <feature_number> <verdict_line>   (T325)
@@ -3106,8 +3165,31 @@ reconcile::process_spec() {
     # (FR-054) then resolve the disposition (data-model §5). On fired=0
     # (forward / equal / no-drift) the write proceeds SILENTLY — no
     # prompt, no warning (SC-017, the zero-false-positive path).
-    local drift_issue_json drift_verdict drift_fired drift_disp
-    drift_issue_json="$(reconcile::_fetch_drift_issue_json "$feature_number" 2>/dev/null || true)"
+    local drift_issue_json drift_verdict drift_fired drift_disp drift_fetch_rc
+    # Capture the fetch rc via if/else, NOT a bare `x=$(...); rc=$?`: under
+    # `set -e` a bare assignment whose command substitution exits non-zero
+    # aborts the whole reconcile BEFORE the `rc=$?` line runs — so an
+    # unreadable Linear (rc 3) would crash the run instead of failing closed.
+    # An assignment in an `if` condition is the documented set -e exemption.
+    if drift_issue_json="$(reconcile::_fetch_drift_issue_json "$feature_number" 2>/dev/null)"; then
+        drift_fetch_rc=0
+    else
+        drift_fetch_rc=$?
+    fi
+    # rc 3 = Linear was unreadable (transport / GraphQL errors / malformed),
+    # which is NOT the same as "Issue absent". Drift stays advisory by
+    # default (fall through, treat as absent, proceed), but an explicit
+    # --on-drift=abort must fail closed: we cannot prove Linear isn't ahead,
+    # so refuse the write rather than risk clobbering it (#02).
+    if (( drift_fetch_rc != 0 )); then
+        if [[ "$ARG_ON_DRIFT" == "abort" ]]; then
+            summary::add skipped "spec ${feature_number} skipped: Linear unreadable and --on-drift=abort (fail-closed; Linear unchanged)"
+            reconcile::log "spec ${feature_number}: drift fetch unavailable (rc ${drift_fetch_rc}) and --on-drift=abort; skipping write (fail-closed, Linear unchanged)"
+            return 0
+        fi
+        reconcile::log "spec ${feature_number}: drift fetch unavailable (rc ${drift_fetch_rc}); drift advisory — proceeding (treated as absent)"
+        drift_issue_json=""
+    fi
     drift_verdict="$(reconcile::compute_drift \
         "$feature_number" "$spec_dir" "${drift_issue_json:-}" "$lifecycle_phase")"
     drift_fired="$(reconcile::_drift_verdict_field "$drift_verdict" fired)"
