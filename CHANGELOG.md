@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### v0.2.0 (pending release) — Drift-aware write-authority (spec 003)
+## [0.2.0] — 2026-05-31 — Drift-aware write-authority (spec 003)
 
-Redefines write-authority from the v1.0.0 branch-gate to a **drift-aware** model. Implements the v2.0.0 constitution's amended Principle IV ("Write-Authority Follows The Filesystem"). The release tag is gated on the downstream dogfood (`validation/dogfood-003.md`) + CI green.
+Redefines write-authority from the v1.0.0 branch-gate to a **drift-aware** model. Implements the v2.0.0 constitution's amended Principle IV ("Write-Authority Follows The Filesystem").
 
 - **Write from any worktree (FR-051)** — the FR-025 branch-gate is removed. Any worktree may reconcile a spec to Linear; the branch name is a heuristic for "who has the latest", not a permission gate. Fixes the founding pain: a merged spec (feature branch deleted) can now be reconciled from `main` with zero flags.
 - **Backward-drift surfaced, never blocked (FR-052..FR-057, SC-017)** — before writing, the bridge compares disk vs Linear: if Linear's recorded lifecycle phase is further along than the disk-inferred phase, it emits a WARNING — then proceeds. Spec-dir commit recency (Linear's `updatedAt` newer than the spec dir's last commit, ±120s skew) only *corroborates* a phase drift; it never raises a warning on its own, so a no-op re-run — or a third-party edit that bumps `updatedAt` without advancing the phase — stays silent (SC-017 idempotency). The operator decides; the bridge surfaces, it does not enforce (Principle VIII).
